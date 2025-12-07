@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -70,10 +71,11 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if err != nil {
 		logger.Error(err, "Failed to get ENI info")
 		r.Recorder.Event(pod, corev1.EventTypeWarning, "ENILookupFailed", err.Error())
-		if err := r.updateStatus(ctx, pod, corev1.ConditionFalse, "ENILookupFailed", err.Error()); err != nil {
-			logger.Error(err, "Failed to update status")
+		if statusErr := r.updateStatus(ctx, pod, corev1.ConditionFalse, "ENILookupFailed", err.Error()); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status")
 		}
-		return ctrl.Result{}, err
+		// Backoff for transient failures instead of immediate retry
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Validate ENI
