@@ -1,53 +1,59 @@
 package controller
 
 import (
-	"context"
-
-	corev1 "k8s.io/api/core/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"encoding/json"
+	"fmt"
+	"strings"
 )
 
-// validatePodForReconciliation performs initial validation checks on a pod before reconciliation.
-// It returns (shouldContinue, result, error) where:
-//   - shouldContinue: true if reconciliation should proceed, false if it should exit early
-//   - result: the ctrl.Result to return if shouldContinue is false
-//   - error: any error that occurred during validation
-//
-// The function handles:
-//   - Skipping pods with hostNetwork=true (they don't use ENIs)
-//   - Skipping pods without an IP address (not ready for tagging)
-//   - Delegating to handlePodDeletion for pods being deleted
-//   - Adding the finalizer if not already present
-func (r *PodReconciler) validatePodForReconciliation(ctx context.Context, pod *corev1.Pod, req ctrl.Request) (bool, ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Skip pods using host network
-	if pod.Spec.HostNetwork {
-		logger.V(1).Info("Skipping pod with hostNetwork=true", "pod", req.NamespacedName)
-		return false, ctrl.Result{}, nil
+// validateTags validates the tag annotation value.
+// It checks:
+// - JSON format is valid
+// - Tag keys and values meet AWS requirements
+// - No reserved prefixes are used
+// - Tag count doesn't exceed AWS limits
+func validateTags(annotationValue string) error {
+	var tags map[string]string
+	if err := json.Unmarshal([]byte(annotationValue), &tags); err != nil {
+		return fmt.Errorf("invalid JSON format: %w", err)
 	}
 
-	// Skip if pod is in pending state without IP
-	if pod.Status.PodIP == "" {
-		logger.V(1).Info("Pod has no IP yet, skipping", "pod", req.NamespacedName, "phase", pod.Status.Phase)
-		return false, ctrl.Result{}, nil
+	if len(tags) == 0 {
+		return fmt.Errorf("no tags specified")
 	}
 
-	// Handle pod deletion
-	if !pod.DeletionTimestamp.IsZero() {
-		result, err := r.handlePodDeletion(ctx, pod)
-		return false, result, err
+	if len(tags) > MaxTagsPerENI {
+		return fmt.Errorf("too many tags: %d (max %d)", len(tags), MaxTagsPerENI)
 	}
 
-	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(pod, finalizerName) {
-		controllerutil.AddFinalizer(pod, finalizerName)
-		if err := r.Update(ctx, pod); err != nil {
-			return false, ctrl.Result{}, err
+	for key, value := range tags {
+		// Check key length
+		if len(key) == 0 || len(key) > MaxTagKeyLength {
+			return fmt.Errorf("tag key length must be 1-%d characters: %q", MaxTagKeyLength, key)
+		}
+
+		// Check value length
+		if len(value) > MaxTagValueLength {
+			return fmt.Errorf("tag value length must be 0-%d characters: %q", MaxTagValueLength, value)
+		}
+
+		// Check for reserved prefixes
+		for _, prefix := range reservedPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				return fmt.Errorf("tag key cannot start with reserved prefix %q: %q", prefix, key)
+			}
+		}
+
+		// Validate key pattern
+		if !tagKeyPattern.MatchString(key) {
+			return fmt.Errorf("invalid tag key format: %q", key)
+		}
+
+		// Validate value pattern
+		if !tagValuePattern.MatchString(value) {
+			return fmt.Errorf("invalid tag value format: %q", value)
 		}
 	}
 
-	return true, ctrl.Result{}, nil
+	return nil
 }
