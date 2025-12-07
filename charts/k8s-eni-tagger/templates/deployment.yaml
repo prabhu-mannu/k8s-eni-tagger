@@ -40,6 +40,22 @@ spec:
             {{- if .Values.config.dryRun }}
             - --dry-run
             {{- end }}
+            {{- if .Values.config.subnetIDs }}
+            - --subnet-ids={{ .Values.config.subnetIDs }}
+            {{- end }}
+            {{- if .Values.config.allowSharedENITagging }}
+            - --allow-shared-eni-tagging
+            {{- end }}
+            {{- if not .Values.config.enableENICache }}
+            - --enable-eni-cache=false
+            {{- end }}
+            {{- if .Values.config.enableCacheConfigMap }}
+            - --enable-cache-configmap
+            {{- end }}
+            - --aws-rate-limit-qps={{ .Values.config.awsRateLimitQPS }}
+            - --aws-rate-limit-burst={{ .Values.config.awsRateLimitBurst }}
+            - --pprof-bind-address={{ .Values.config.pprofBindAddress }}
+            - --metrics-bind-address=:8090
           {{- if .Values.env }}
           env:
             {{- range $key, $value := .Values.env }}
@@ -49,7 +65,7 @@ spec:
           {{- end }}
           ports:
             - name: metrics
-              containerPort: 8080
+              containerPort: 8090
               protocol: TCP
             - name: health
               containerPort: 8081

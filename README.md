@@ -34,14 +34,21 @@ kubectl apply -f deploy/manifests.yaml
 
 ### Configuration Flags
 
-| Flag                          | Default              | Description                                |
-| ----------------------------- | -------------------- | ------------------------------------------ |
-| `--annotation-key`            | `eni-tagger.io/tags` | Annotation key to watch for tags.          |
-| `--watch-namespace`           | `""` (all)           | Namespace to watch. If empty, watches all. |
-| `--max-concurrent-reconciles` | `1`                  | Number of concurrent worker threads.       |
-| `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).      |
-| `--metrics-bind-address`      | `:8080`              | Address to bind Prometheus metrics.        |
-| `--health-probe-bind-address` | `:8081`              | Address to bind health probes.             |
+| Flag                          | Default              | Description                                                                  |
+| ----------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `--annotation-key`            | `eni-tagger.io/tags` | Annotation key to watch for tags.                                            |
+| `--watch-namespace`           | `""` (all)           | Namespace to watch. If empty, watches all.                                   |
+| `--max-concurrent-reconciles` | `1`                  | Number of concurrent worker threads.                                         |
+| `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).                                        |
+| `--metrics-bind-address`      | `:8090`              | Address to bind Prometheus metrics.                                          |
+| `--health-probe-bind-address` | `:8081`              | Address to bind health probes.                                               |
+| `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs (or via `ENI_TAGGER_SUBNET_IDS`). |
+| `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs (e.g., standard EKS nodes). Use with caution.   |
+| `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching (lifecycle-based).                              |
+| `--enable-cache-configmap`    | `false`              | Enable ConfigMap persistence for ENI cache to survive restarts.              |
+| `--aws-rate-limit-qps`        | `10`                 | AWS API rate limit (requests per second).                                    |
+| `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
+| `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
 
 ## 📖 Usage
 
