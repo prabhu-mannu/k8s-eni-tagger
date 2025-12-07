@@ -35,3 +35,4 @@ Thumbs.db
 # Project specific binaries
 bin/
 manager
+k8s-eni-tagger

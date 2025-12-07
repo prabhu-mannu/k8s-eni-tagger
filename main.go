@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"net/http"
 	_ "net/http/pprof" // Register pprof handlers
@@ -48,7 +47,7 @@ func main() {
 	var subnetIDs string
 	var allowSharedENITagging bool
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8090", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -91,6 +90,10 @@ func main() {
 		for _, p := range parts {
 			trimmed := strings.TrimSpace(p)
 			if trimmed != "" {
+				if !strings.HasPrefix(trimmed, "subnet-") {
+					setupLog.Error(nil, "Invalid subnet ID format", "subnet", trimmed)
+					os.Exit(1)
+				}
 				parsedSubnetIDs = append(parsedSubnetIDs, trimmed)
 			}
 		}
@@ -133,14 +136,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	awsClient, err := aws.NewClient(context.TODO())
+	ctx := ctrl.SetupSignalHandler()
+
+	awsClient, err := aws.NewClient(ctx)
 	if err != nil {
 		setupLog.Error(err, "unable to create AWS client")
 		os.Exit(1)
 	}
 
 	// Add health check
-	awsChecker, err := health.NewAWSChecker(context.TODO())
+	awsChecker, err := health.NewAWSChecker(ctx)
 	if err != nil {
 		setupLog.Error(err, "unable to create AWS health checker")
 		os.Exit(1)
@@ -174,7 +179,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
