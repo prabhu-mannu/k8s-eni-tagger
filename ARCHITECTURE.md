@@ -12,15 +12,17 @@ graph TD
     subgraph Controller Logic
         Controller -->|1. Watch| Cache[Informer Cache]
         Controller -->|2. Reconcile| Reconciler[Pod Reconciler]
-        Reconciler -->|3. Parse| Annotation[Annotation Parser]
-        Reconciler -->|4. Resolve| AWS[AWS Client]
+        Reconciler -->|3. Check| ENICache[ENI Cache]
+        Reconciler -->|4. Parse| Annotation[Annotation Parser]
+        Reconciler -->|5. Resolve| AWS[AWS Client]
+        ENICache -.->|Persist| ConfigMap[Cache ConfigMap]
     end
 
     AWS -->|DescribeNetworkInterfaces| EC2[AWS EC2 API]
     AWS -->|CreateTags/DeleteTags| EC2
 
-    Reconciler -->|5. Update Status| Pod
-    Reconciler -->|6. Emit Event| Events[Kubernetes Events]
+    Reconciler -->|6. Update Status| Pod
+    Reconciler -->|7. Emit Event| Events[Kubernetes Events]
 ```
 
 ## Components
@@ -30,12 +32,17 @@ graph TD
     - **Watch**: Listens for Pod Create/Update events.
     - **Filter**: Ignores irrelevant Pods (no annotation, hostNetwork).
     - **Sync**: Calculates the difference between desired tags (annotation) and actual tags (state).
-3.  **AWS Client**: Wrapper around AWS SDK v2.
+3.  **AWS Client**: Wrapper around AWS SDK v2 with **Rate Limiting**.
     - Handles API calls (`DescribeNetworkInterfaces`, `CreateTags`, `DeleteTags`).
+    - **Token Bucket Rate Limiter**: Controls QPS to prevent AWS API throttling.
     - Implements retry logic with exponential backoff.
     - Instruments metrics for latency and errors.
-4.  **Metrics Server**: Exposes Prometheus metrics (`/metrics`).
-5.  **Health Probes**: Exposes Liveness (`/healthz`) and Readiness (`/readyz`) endpoints.
+4.  **ENI Cache**:
+    - Caches ENI IDs resolved from Pod IPs.
+    - **Lifecycle-based**: Cache entries are invalidated only when the Pod is deleted.
+    - Optional **ConfigMap Persistence**: Preserves cache across controller restarts to reduce API calls on startup.
+5.  **Metrics Server**: Exposes Prometheus metrics (`/metrics`).
+6.  **Health Probes**: Exposes Liveness (`/healthz`) and Readiness (`/readyz`) endpoints.
 
 ## Data Flow
 

@@ -54,6 +54,14 @@ config:
   maxConcurrentReconciles: 1
   dryRun: false
   logLevel: "info"
+  # New configuration flags
+  subnetIDs: ""
+  allowSharedENITagging: false
+  enableENICache: true
+  enableCacheConfigMap: false
+  awsRateLimitQPS: 10
+  awsRateLimitBurst: 20
+  pprofBindAddress: "0"
 
 # Extra environment variables (Map format for easier --set)
 env: {}
