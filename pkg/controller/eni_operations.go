@@ -3,96 +3,125 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"k8s-eni-tagger/pkg/aws"
-	"k8s-eni-tagger/pkg/metrics"
 
 	corev1 "k8s.io/api/core/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// applyTagChanges applies tag additions and removals to the specified ENI.
-// It handles both dry-run mode (logging only) and actual AWS API calls.
-// The function:
-//   - Removes tags first (if any), then adds/updates tags
-//   - Emits Kubernetes events for each operation
-//   - Updates metrics for success/failure
-//   - Returns early on fatal errors like UnauthorizedOperation
-//
-// In dry-run mode, it only logs what would be done without making AWS API calls.
-func (r *PodReconciler) applyTagChanges(ctx context.Context, pod *corev1.Pod, eniID string, tagsToAdd map[string]string, tagsToRemove []string) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	// Apply Removals
-	if len(tagsToRemove) > 0 {
-		if r.DryRun {
-			logger.Info("Dry-run: skipping untagging", "eniID", eniID, "tags", tagsToRemove)
-			r.Recorder.Eventf(pod, corev1.EventTypeNormal, "DryRunUntag", "Would remove tags from ENI %s: %v", eniID, tagsToRemove)
-		} else {
-			if err := r.AWSClient.UntagENI(ctx, eniID, tagsToRemove); err != nil {
-				logger.Error(err, "Failed to untag ENI", "eniID", eniID)
-				r.updateStatus(ctx, pod, corev1.ConditionFalse, "UntaggingFailed", err.Error())
-				r.Recorder.Event(pod, corev1.EventTypeWarning, "UntaggingFailed", err.Error())
-				metrics.TagOperationsTotal.WithLabelValues("untag", "error").Inc()
-
-				// Check for fatal errors
-				if strings.Contains(err.Error(), "UnauthorizedOperation") {
-					return ctrl.Result{}, nil // Stop retrying
-				}
-				return ctrl.Result{}, err
-			}
-			metrics.TagOperationsTotal.WithLabelValues("untag", "success").Inc()
-		}
+// getENIInfo retrieves ENI information for a given IP address.
+// Uses cache if available, otherwise queries AWS API.
+func (r *PodReconciler) getENIInfo(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+	if r.ENICache != nil {
+		return r.ENICache.GetENIInfoByIP(ctx, ip)
 	}
-
-	// Apply Additions
-	if len(tagsToAdd) > 0 {
-		if r.DryRun {
-			logger.Info("Dry-run: skipping tagging", "eniID", eniID, "tags", tagsToAdd)
-			r.Recorder.Eventf(pod, corev1.EventTypeNormal, "DryRunTag", "Would add tags to ENI %s: %v", eniID, tagsToAdd)
-		} else {
-			if err := r.AWSClient.TagENI(ctx, eniID, tagsToAdd); err != nil {
-				logger.Error(err, "Failed to tag ENI", "eniID", eniID)
-				r.updateStatus(ctx, pod, corev1.ConditionFalse, "TaggingFailed", err.Error())
-				r.Recorder.Event(pod, corev1.EventTypeWarning, "TaggingFailed", err.Error())
-				metrics.TagOperationsTotal.WithLabelValues("tag", "error").Inc()
-
-				// Check for fatal errors
-				if strings.Contains(err.Error(), "UnauthorizedOperation") {
-					return ctrl.Result{}, nil // Stop retrying
-				}
-				return ctrl.Result{}, err
-			}
-			metrics.TagOperationsTotal.WithLabelValues("tag", "success").Inc()
-		}
-	}
-
-	return ctrl.Result{}, nil
+	return r.AWSClient.GetENIInfoByIP(ctx, ip)
 }
 
-// checkSubnetFilter checks if the ENI's subnet is in the allowed list.
-// If SubnetIDs is configured and the ENI's subnet is not in the list,
-// the function updates the pod status and returns false.
-// If SubnetIDs is empty or the subnet is allowed, it returns true.
-func (r *PodReconciler) checkSubnetFilter(ctx context.Context, pod *corev1.Pod, eniInfo *aws.ENIInfo) (bool, error) {
+// validateENI performs validation checks on the ENI.
+// It checks:
+// - Subnet ID filtering (if configured)
+// - Shared ENI detection (if AllowSharedENITagging is false)
+func (r *PodReconciler) validateENI(ctx context.Context, eniInfo *aws.ENIInfo) error {
 	logger := log.FromContext(ctx)
 
+	// Check subnet filtering
 	if len(r.SubnetIDs) > 0 {
 		allowed := false
-		for _, id := range r.SubnetIDs {
-			if id == eniInfo.SubnetID {
+		for _, subnet := range r.SubnetIDs {
+			if eniInfo.SubnetID == subnet {
 				allowed = true
 				break
 			}
 		}
 		if !allowed {
-			logger.Info("Skipping ENI in excluded subnet", "eniID", eniInfo.ID, "subnetID", eniInfo.SubnetID)
-			r.updateStatus(ctx, pod, corev1.ConditionFalse, "SubnetExcluded", fmt.Sprintf("ENI subnet %s is not in allowed list", eniInfo.SubnetID))
-			return false, nil
+			return fmt.Errorf("ENI subnet %s is not in allowed list", eniInfo.SubnetID)
 		}
 	}
 
-	return true, nil
+	// Check if ENI is shared
+	if eniInfo.IsShared && !r.AllowSharedENITagging {
+		logger.Info("Skipping shared ENI (use --allow-shared-eni-tagging to override)",
+			"eniID", eniInfo.ID,
+			"interfaceType", eniInfo.InterfaceType,
+			"description", eniInfo.Description)
+		return fmt.Errorf("ENI %s is shared (multiple IPs), tagging would affect other pods", eniInfo.ID)
+	}
+
+	return nil
+}
+
+// applyENITags applies tags to the ENI based on the pod annotation.
+// It calculates the diff between current and desired state and applies only the necessary changes.
+func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniInfo *aws.ENIInfo, annotationValue string) error {
+	logger := log.FromContext(ctx)
+
+	// Get last applied tags
+	lastAppliedValue := pod.Annotations[LastAppliedAnnotationKey]
+	lastAppliedHash := pod.Annotations[LastAppliedHashKey]
+
+	// Parse and compare tags
+	currentTags, _, diff, err := parseAndCompareTags(ctx, pod, annotationValue, lastAppliedValue)
+	if err != nil {
+		return fmt.Errorf("failed to parse tags: %w", err)
+	}
+
+	// Calculate desired hash
+	desiredHash := computeHash(currentTags)
+
+	// Check for hash conflicts
+	if checkHashConflict(eniInfo, desiredHash, lastAppliedHash, r.AllowSharedENITagging) {
+		eniHash := eniInfo.Tags[HashTagKey]
+		return fmt.Errorf("hash conflict detected: ENI hash=%s, our last hash=%s (another controller may be managing this ENI)", eniHash, lastAppliedHash)
+	}
+
+	// If already synced, nothing to do
+	if desiredHash == lastAppliedHash && len(diff.toAdd) == 0 && len(diff.toRemove) == 0 {
+		logger.Info("Tags already in sync", "eniID", eniInfo.ID)
+		if err := r.updateStatus(ctx, pod, corev1.ConditionTrue, "Synced", fmt.Sprintf("ENI %s tags are up to date", eniInfo.ID)); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Apply changes
+	if r.DryRun {
+		logger.Info("DRY RUN: Would apply tags", "eniID", eniInfo.ID, "toAdd", diff.toAdd, "toRemove", diff.toRemove)
+	} else {
+		// Add hash to tags
+		tagsWithHash := make(map[string]string)
+		for k, v := range diff.toAdd {
+			tagsWithHash[k] = v
+		}
+		tagsWithHash[HashTagKey] = desiredHash
+
+		// Apply tag changes
+		if len(tagsWithHash) > 0 {
+			if err := r.AWSClient.TagENI(ctx, eniInfo.ID, tagsWithHash); err != nil {
+				return fmt.Errorf("failed to tag ENI: %w", err)
+			}
+		}
+
+		if len(diff.toRemove) > 0 {
+			if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
+				return fmt.Errorf("failed to untag ENI: %w", err)
+			}
+		}
+
+		logger.Info("Applied tags to ENI", "eniID", eniInfo.ID, "added", len(tagsWithHash), "removed", len(diff.toRemove))
+		r.Recorder.Event(pod, corev1.EventTypeNormal, "TagsApplied", fmt.Sprintf("Applied %d tags to ENI %s", len(currentTags), eniInfo.ID))
+	}
+
+	// Update pod annotations
+	if err := updatePodAnnotations(ctx, r, pod, currentTags, desiredHash); err != nil {
+		return fmt.Errorf("failed to update pod annotations: %w", err)
+	}
+
+	// Update status
+	if err := r.updateStatus(ctx, pod, corev1.ConditionTrue, "Synced", fmt.Sprintf("Successfully tagged ENI %s", eniInfo.ID)); err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"k8s-eni-tagger/pkg/aws"
+	enicache "k8s-eni-tagger/pkg/cache"
 	"k8s-eni-tagger/pkg/controller"
 	"k8s-eni-tagger/pkg/health"
 
@@ -60,6 +61,18 @@ func main() {
 	flag.StringVar(&subnetIDs, "subnet-ids", "", "Comma-separated list of allowed Subnet IDs. If empty, all subnets are allowed (subject to safety checks). Can also be set via ENI_TAGGER_SUBNET_IDS env var.")
 	flag.BoolVar(&allowSharedENITagging, "allow-shared-eni-tagging", false, "Allow tagging of shared ENIs (e.g. standard EKS nodes). WARNING: This can cause tag thrashing.")
 
+	// ENI Cache flags
+	var enableENICache bool
+	var enableCacheConfigMap bool
+	flag.BoolVar(&enableENICache, "enable-eni-cache", true, "Enable in-memory ENI caching (cached until pod deletion).")
+	flag.BoolVar(&enableCacheConfigMap, "enable-cache-configmap", false, "Enable ConfigMap persistence for ENI cache (survives restarts).")
+
+	// Rate limiting flags
+	var awsRateLimitQPS float64
+	var awsRateLimitBurst int
+	flag.Float64Var(&awsRateLimitQPS, "aws-rate-limit-qps", 10, "AWS API rate limit (requests per second).")
+	flag.IntVar(&awsRateLimitBurst, "aws-rate-limit-burst", 20, "AWS API rate limit burst size.")
+
 	// Pprof flag
 	var pprofAddr string
 	flag.StringVar(&pprofAddr, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
@@ -104,6 +117,12 @@ func main() {
 		setupLog.Info("WARNING: Shared ENI tagging is enabled. This may cause tag thrashing on standard EKS nodes.")
 	}
 
+	// Validate annotation key
+	if annotationKey == "" {
+		setupLog.Error(nil, "annotation-key cannot be empty")
+		os.Exit(1)
+	}
+
 	// Start pprof server if enabled
 	if pprofAddr != "0" {
 		go func() {
@@ -138,27 +157,52 @@ func main() {
 
 	ctx := ctrl.SetupSignalHandler()
 
-	awsClient, err := aws.NewClient(ctx)
+	// Create AWS client with rate limiting
+	rlConfig := aws.RateLimitConfig{
+		QPS:   awsRateLimitQPS,
+		Burst: awsRateLimitBurst,
+	}
+	awsClient, err := aws.NewClientWithRateLimiter(ctx, rlConfig)
 	if err != nil {
 		setupLog.Error(err, "unable to create AWS client")
 		os.Exit(1)
 	}
+	setupLog.Info("AWS client initialized with rate limiting", "qps", awsRateLimitQPS, "burst", awsRateLimitBurst)
 
-	// Add health check
-	awsChecker, err := health.NewAWSChecker(ctx)
-	if err != nil {
-		setupLog.Error(err, "unable to create AWS health checker")
-		os.Exit(1)
-	}
+	// Add health check using the shared EC2 client
+	awsChecker := health.NewAWSChecker(awsClient.GetEC2Client())
 	if err := mgr.AddReadyzCheck("aws-connectivity", awsChecker.Check); err != nil {
 		setupLog.Error(err, "unable to add readiness check")
 		os.Exit(1)
+	}
+
+	// Initialize ENI cache if enabled
+	var eniCache *enicache.ENICache
+	if enableENICache {
+		eniCache = enicache.NewENICache(awsClient)
+
+		// Add ConfigMap persistence if enabled
+		if enableCacheConfigMap {
+			// Get namespace from environment or use default
+			namespace := os.Getenv("POD_NAMESPACE")
+			if namespace == "" {
+				namespace = "kube-system"
+			}
+			cmPersister := enicache.NewConfigMapPersister(mgr.GetClient(), namespace)
+			eniCache.WithConfigMapPersister(cmPersister)
+			if err := eniCache.LoadFromConfigMap(ctx); err != nil {
+				setupLog.Error(err, "Failed to load cache from ConfigMap, starting fresh")
+			}
+		}
+
+		setupLog.Info("ENI caching enabled (lifecycle-based)", "configMapPersistence", enableCacheConfigMap)
 	}
 
 	if err = (&controller.PodReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		AWSClient:             awsClient,
+		ENICache:              eniCache,
 		Recorder:              mgr.GetEventRecorderFor("k8s-eni-tagger"),
 		AnnotationKey:         annotationKey,
 		DryRun:                dryRun,

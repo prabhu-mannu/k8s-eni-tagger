@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"k8s-eni-tagger/pkg/metrics"
@@ -30,14 +32,87 @@ type Client interface {
 	GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error)
 	TagENI(ctx context.Context, eniID string, tags map[string]string) error
 	UntagENI(ctx context.Context, eniID string, tagKeys []string) error
+	// GetEC2Client returns the underlying EC2 client for sharing with other components
+	GetEC2Client() *ec2.Client
+}
+
+// RateLimitConfig configures rate limiting for AWS API calls
+type RateLimitConfig struct {
+	// QPS is the maximum queries per second
+	QPS float64
+	// Burst is the maximum burst size
+	Burst int
+}
+
+// DefaultRateLimitConfig returns sensible defaults for AWS API rate limiting
+// EC2 has different limits per API, but 10 QPS with burst 20 is conservative
+func DefaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		QPS:   10,
+		Burst: 20,
+	}
 }
 
 type defaultClient struct {
-	ec2Client *ec2.Client
+	ec2Client   *ec2.Client
+	rateLimiter *rateLimiter
 }
 
-// NewClient creates a new AWS client
+// rateLimiter implements a token bucket rate limiter
+type rateLimiter struct {
+	tokens     float64
+	maxTokens  float64
+	refillRate float64 // tokens per second
+	lastRefill time.Time
+	mu         sync.Mutex
+}
+
+func newRateLimiter(qps float64, burst int) *rateLimiter {
+	return &rateLimiter{
+		tokens:     float64(burst),
+		maxTokens:  float64(burst),
+		refillRate: qps,
+		lastRefill: time.Now(),
+	}
+}
+
+func (r *rateLimiter) Wait(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Refill tokens based on elapsed time
+	now := time.Now()
+	elapsed := now.Sub(r.lastRefill).Seconds()
+	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
+	r.lastRefill = now
+
+	if r.tokens >= 1 {
+		r.tokens--
+		return nil
+	}
+
+	// Calculate wait time for next token
+	waitTime := time.Duration((1-r.tokens)/r.refillRate*1000) * time.Millisecond
+	r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		r.mu.Lock()
+		return ctx.Err()
+	case <-time.After(waitTime):
+		r.mu.Lock()
+		r.tokens = 0 // Reset after wait
+		return nil
+	}
+}
+
+// NewClient creates a new AWS client with default rate limiting
 func NewClient(ctx context.Context) (Client, error) {
+	return NewClientWithRateLimiter(ctx, DefaultRateLimitConfig())
+}
+
+// NewClientWithRateLimiter creates a new AWS client with custom rate limiting
+func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
@@ -47,16 +122,28 @@ func NewClient(ctx context.Context) (Client, error) {
 	cfg.AppID = "k8s-eni-tagger"
 
 	return &defaultClient{
-		ec2Client: ec2.NewFromConfig(cfg),
+		ec2Client:   ec2.NewFromConfig(cfg),
+		rateLimiter: newRateLimiter(rlConfig.QPS, rlConfig.Burst),
 	}, nil
+}
+
+// GetEC2Client returns the underlying EC2 client for sharing with other components
+func (c *defaultClient) GetEC2Client() *ec2.Client {
+	return c.ec2Client
 }
 
 // GetENIInfoByIP finds the ENI details associated with a private IP address
 func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error) {
+	// Rate limit AWS API calls
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
 	start := time.Now()
+	status := "success"
 	defer func() {
 		duration := time.Since(start).Seconds()
-		metrics.AWSAPILatency.WithLabelValues("DescribeNetworkInterfaces", "success").Observe(duration)
+		metrics.AWSAPILatency.WithLabelValues("DescribeNetworkInterfaces", status).Observe(duration)
 	}()
 
 	input := &ec2.DescribeNetworkInterfacesInput{
@@ -72,7 +159,7 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	// Retry is handled by the AWS SDK default retryer
 	result, err := c.ec2Client.DescribeNetworkInterfaces(ctx, input)
 	if err != nil {
-		metrics.AWSAPILatency.WithLabelValues("DescribeNetworkInterfaces", "error").Observe(time.Since(start).Seconds())
+		status = "error"
 		return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
 	}
 
@@ -98,21 +185,27 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 		Tags:          tags,
 	}
 
-	// Determine if ENI is shared
-	// 1. If it has multiple private IPs, it's likely shared (e.g. Node primary ENI)
-	// 2. If it's a "interface" type (standard ENI) and has multiple IPs, it's definitely shared on EKS
-	// 3. Fargate ENIs usually have 1 IP. Branch ENIs (trunk) might be different.
-	if len(eni.PrivateIpAddresses) > 1 {
-		info.IsShared = true
-	}
+	// Determine if ENI is shared using improved heuristics
+	// Check description for AWS VPC CNI patterns
+	isVPCCNI := strings.Contains(aws.ToString(eni.Description), "aws-K8S-")
 
-	if string(eni.InterfaceType) == "trunk" {
+	switch {
+	case string(eni.InterfaceType) == "branch":
+		// EKS Fargate/trunk-based - branch ENIs are pod-exclusive
+		info.IsShared = false
+	case string(eni.InterfaceType) == "trunk":
+		// Trunk ENIs host multiple branch ENIs
 		info.IsShared = true
+	case isVPCCNI && len(eni.PrivateIpAddresses) == 1:
+		// VPC CNI secondary ENI with single IP - likely pod exclusive (prefix delegation)
+		info.IsShared = false
+	case len(eni.PrivateIpAddresses) > 1:
+		// Multiple IPs on same ENI - definitely shared
+		info.IsShared = true
+	default:
+		// Single IP, standard interface - could be either, assume not shared
+		info.IsShared = false
 	}
-
-	// Additional heuristic: Check description for "aws-K8S" which often indicates a secondary ENI managed by VPC CNI
-	// But the most reliable check for "Is this EXCLUSIVE to this pod?" is hard without more context.
-	// For now, >1 IP is a strong signal of "Shared Node ENI".
 
 	return info, nil
 }
@@ -123,10 +216,16 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 		return nil
 	}
 
+	// Rate limit AWS API calls
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter wait: %w", err)
+	}
+
 	start := time.Now()
+	status := "success"
 	defer func() {
 		duration := time.Since(start).Seconds()
-		metrics.AWSAPILatency.WithLabelValues("CreateTags", "success").Observe(duration)
+		metrics.AWSAPILatency.WithLabelValues("CreateTags", status).Observe(duration)
 	}()
 
 	var ec2Tags []types.Tag
@@ -145,7 +244,7 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 	// Retry is handled by the AWS SDK default retryer
 	_, err := c.ec2Client.CreateTags(ctx, input)
 	if err != nil {
-		metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
+		status = "error"
 
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
@@ -168,10 +267,16 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 		return nil
 	}
 
+	// Rate limit AWS API calls
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter wait: %w", err)
+	}
+
 	start := time.Now()
+	status := "success"
 	defer func() {
 		duration := time.Since(start).Seconds()
-		metrics.AWSAPILatency.WithLabelValues("DeleteTags", "success").Observe(duration)
+		metrics.AWSAPILatency.WithLabelValues("DeleteTags", status).Observe(duration)
 	}()
 
 	var ec2Tags []types.Tag
@@ -189,7 +294,7 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 	// Retry is handled by the AWS SDK default retryer
 	_, err := c.ec2Client.DeleteTags(ctx, input)
 	if err != nil {
-		metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
+		status = "error"
 
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
