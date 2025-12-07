@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"k8s-eni-tagger/pkg/metrics"
@@ -44,6 +43,9 @@ func NewClient(ctx context.Context) (Client, error) {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
 
+	// Set custom User-Agent
+	cfg.AppID = "k8s-eni-tagger"
+
 	return &defaultClient{
 		ec2Client: ec2.NewFromConfig(cfg),
 	}, nil
@@ -66,34 +68,12 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 		},
 	}
 
-	var result *ec2.DescribeNetworkInterfacesOutput
-	var err error
-
 	// Retry with exponential backoff
-	for attempt := 0; attempt < 3; attempt++ {
-		result, err = c.ec2Client.DescribeNetworkInterfaces(ctx, input)
-		if err == nil {
-			break
-		}
-
-		// Check if it's a throttling error
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			if apiErr.ErrorCode() == "RequestLimitExceeded" ||
-				apiErr.ErrorCode() == "Throttling" {
-				backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-				time.Sleep(backoff)
-				continue
-			}
-		}
-
-		metrics.AWSAPILatency.WithLabelValues("DescribeNetworkInterfaces", "error").Observe(time.Since(start).Seconds())
-		return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
-	}
-
+	// Retry is handled by the AWS SDK default retryer
+	result, err := c.ec2Client.DescribeNetworkInterfaces(ctx, input)
 	if err != nil {
 		metrics.AWSAPILatency.WithLabelValues("DescribeNetworkInterfaces", "error").Observe(time.Since(start).Seconds())
-		return nil, fmt.Errorf("failed to describe network interfaces after retries: %w", err)
+		return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
 	}
 
 	if len(result.NetworkInterfaces) == 0 {
@@ -123,6 +103,10 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	// 2. If it's a "interface" type (standard ENI) and has multiple IPs, it's definitely shared on EKS
 	// 3. Fargate ENIs usually have 1 IP. Branch ENIs (trunk) might be different.
 	if len(eni.PrivateIpAddresses) > 1 {
+		info.IsShared = true
+	}
+
+	if string(eni.InterfaceType) == "trunk" {
 		info.IsShared = true
 	}
 
@@ -158,36 +142,24 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 		Tags:      ec2Tags,
 	}
 
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		_, err = c.ec2Client.CreateTags(ctx, input)
-		if err == nil {
-			return nil
-		}
+	// Retry is handled by the AWS SDK default retryer
+	_, err := c.ec2Client.CreateTags(ctx, input)
+	if err != nil {
+		metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
 
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
-			// Handle specific errors
 			switch apiErr.ErrorCode() {
-			case "RequestLimitExceeded", "Throttling":
-				backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-				time.Sleep(backoff)
-				continue
 			case "InvalidNetworkInterfaceID.NotFound":
-				metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
 				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
 			case "UnauthorizedOperation":
-				metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
-				return fmt.Errorf("insufficient permissions to tag ENI %s: %w", eniID, err)
+				return fmt.Errorf("insufficient permissions to tag ENI %s (check ec2:CreateTags): %w", eniID, err)
 			}
 		}
-
-		metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
 		return fmt.Errorf("failed to tag ENI %s: %w", eniID, err)
 	}
 
-	metrics.AWSAPILatency.WithLabelValues("CreateTags", "error").Observe(time.Since(start).Seconds())
-	return fmt.Errorf("failed to tag ENI %s after retries: %w", eniID, err)
+	return nil
 }
 
 // UntagENI removes tags from an ENI
@@ -214,33 +186,22 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 		Tags:      ec2Tags,
 	}
 
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		_, err = c.ec2Client.DeleteTags(ctx, input)
-		if err == nil {
-			return nil
-		}
+	// Retry is handled by the AWS SDK default retryer
+	_, err := c.ec2Client.DeleteTags(ctx, input)
+	if err != nil {
+		metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
 
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) {
 			switch apiErr.ErrorCode() {
-			case "RequestLimitExceeded", "Throttling":
-				backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-				time.Sleep(backoff)
-				continue
 			case "InvalidNetworkInterfaceID.NotFound":
-				metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
 				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
 			case "UnauthorizedOperation":
-				metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
-				return fmt.Errorf("insufficient permissions to untag ENI %s: %w", eniID, err)
+				return fmt.Errorf("insufficient permissions to untag ENI %s (check ec2:DeleteTags): %w", eniID, err)
 			}
 		}
-
-		metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
 		return fmt.Errorf("failed to untag ENI %s: %w", eniID, err)
 	}
 
-	metrics.AWSAPILatency.WithLabelValues("DeleteTags", "error").Observe(time.Since(start).Seconds())
-	return fmt.Errorf("failed to untag ENI %s after retries: %w", eniID, err)
+	return nil
 }
