@@ -6,37 +6,38 @@ import (
 )
 
 var (
-	// AWSAPILatency tracks the duration of AWS API calls
+	// AWSAPILatency tracks the latency of AWS API calls
 	AWSAPILatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "eni_tagger_aws_api_latency_seconds",
+			Name:    "k8s_eni_tagger_aws_api_latency_seconds",
 			Help:    "Latency of AWS API calls in seconds",
-			Buckets: prometheus.DefBuckets,
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 10), // 1ms to ~1s
 		},
 		[]string{"operation", "status"},
 	)
 
-	// TagOperationsTotal tracks the number of tag/untag operations
-	TagOperationsTotal = prometheus.NewCounterVec(
+	// CacheHitsTotal tracks the number of cache hits
+	CacheHitsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "eni_tagger_operations_total",
-			Help: "Total number of ENI tagging operations",
+			Name: "k8s_eni_tagger_cache_hits_total",
+			Help: "Total number of ENI cache hits",
 		},
-		[]string{"operation", "status"},
 	)
 
-	// ActiveWorkers tracks the number of active reconciliation workers
-	ActiveWorkers = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "eni_tagger_active_workers",
-			Help: "Number of currently active reconciliation workers",
+	// CacheMissesTotal tracks the number of cache misses
+	CacheMissesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8s_eni_tagger_cache_misses_total",
+			Help: "Total number of ENI cache misses",
 		},
 	)
 )
 
 func init() {
-	// Register custom metrics with the global prometheus registry
-	metrics.Registry.MustRegister(AWSAPILatency)
-	metrics.Registry.MustRegister(TagOperationsTotal)
-	metrics.Registry.MustRegister(ActiveWorkers)
+	// Register custom metrics with the controller-runtime metrics registry
+	metrics.Registry.MustRegister(
+		AWSAPILatency,
+		CacheHitsTotal,
+		CacheMissesTotal,
+	)
 }

@@ -85,6 +85,7 @@ func parseTags(tagStr string) (map[string]string, error) {
 // The hash is computed deterministically by sorting keys alphabetically before hashing.
 // This ensures the same set of tags always produces the same hash value.
 // The hash is used to detect conflicts when multiple controllers manage the same ENI.
+// The hash is truncated to 16 characters (64 bits) which is sufficient for collision detection.
 func computeHash(tags map[string]string) string {
 	keys := make([]string, 0, len(tags))
 	for k := range tags {
@@ -99,5 +100,6 @@ func computeHash(tags map[string]string) string {
 		h.Write([]byte(tags[k]))
 		h.Write([]byte(","))
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	fullHash := hex.EncodeToString(h.Sum(nil))
+	return fullHash[:16] // 64-bit entropy is sufficient for conflict detection
 }
