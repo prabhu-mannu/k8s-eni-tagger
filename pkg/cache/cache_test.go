@@ -137,3 +137,55 @@ func TestENICache_Persistence(t *testing.T) {
 	}
 	mockPersister.mu.Unlock()
 }
+
+func TestENICache_Size(t *testing.T) {
+	c := NewENICache(&MockAWSClient{})
+
+	// Initially 0
+	if c.Size() != 0 {
+		t.Errorf("Expected size 0, got %d", c.Size())
+	}
+
+	// Add mock entry
+	c.set(context.Background(), "1.1.1.1", &aws.ENIInfo{})
+	if c.Size() != 1 {
+		t.Errorf("Expected size 1, got %d", c.Size())
+	}
+}
+
+func TestENICache_LoadError(t *testing.T) {
+	c := NewENICache(&MockAWSClient{})
+	mockPersister := &MockConfigMapPersister{
+		loadError: context.DeadlineExceeded,
+	}
+	c.WithConfigMapPersister(mockPersister)
+
+	err := c.LoadFromConfigMap(context.Background())
+	if err == nil {
+		t.Error("Expected error from LoadFromConfigMap")
+	}
+}
+
+func TestENICache_PersistenceErrors(t *testing.T) {
+	mockAWS := &MockAWSClient{
+		GetENIInfoByIPFunc: func(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+			return &aws.ENIInfo{ID: "eni-2"}, nil
+		},
+	}
+	c := NewENICache(mockAWS)
+	mockPersister := &MockConfigMapPersister{
+		savedError:  context.DeadlineExceeded,
+		deleteError: context.DeadlineExceeded,
+	}
+	c.WithConfigMapPersister(mockPersister)
+
+	// Save error (should just log, not crash or return error to caller of GetENIInfoByIP)
+	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.1")
+	if err != nil {
+		t.Errorf("GetENIInfoByIP failed despite persistence error: %v", err)
+	}
+
+	// Delete error
+	c.Invalidate(context.Background(), "10.0.0.1")
+	// Should not panic
+}
