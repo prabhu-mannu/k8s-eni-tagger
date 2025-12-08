@@ -10,6 +10,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// Cache defines the interface for ENI caching
+type Cache interface {
+	GetENIInfoByIP(ctx context.Context, ip string) (*aws.ENIInfo, error)
+	Invalidate(ctx context.Context, ip string)
+	LoadFromConfigMap(ctx context.Context) error
+	WithConfigMapPersister(persister ConfigMapPersister) *ENICache
+}
+
 // ENICache provides caching for ENI lookups based on pod lifecycle.
 // Since an ENI-to-IP mapping doesn't change during a pod's lifetime,
 // entries are cached until explicitly invalidated (on pod deletion).
