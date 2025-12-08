@@ -19,6 +19,14 @@
   - **Prometheus Metrics**: Tracks API latency, operation counts, and active workers.
   - **Health Checks**: Readiness probe verifies AWS connectivity.
 
+### Rate Limiting Tuning
+
+The controller interacts with the AWS EC2 API, which has strict rate limits.
+
+- `--aws-rate-limit-qps`: Defaults to 10. Increase this for large clusters with high pod churn, but beware of `RequestLimitExceeded` errors.
+- `--aws-rate-limit-burst`: Defaults to 20. Allows short bursts of activity (e.g., node startup).
+- **Recommendation**: For >1000 pods, consider increasing QPS to 20 or 30, and Burst to 50. Monitor the `aws_api_latency_seconds` metric.
+
 ## 📦 Installation
 
 ### Prerequisites
