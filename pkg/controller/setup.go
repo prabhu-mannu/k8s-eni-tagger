@@ -25,49 +25,53 @@ import (
 //
 // The concurrentReconciles parameter controls how many pods can be reconciled in parallel.
 func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager, concurrentReconciles int) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Pod{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: concurrentReconciles}).
+		WithEventFilter(r.createPredicate()).
+		Complete(r)
+}
+
+func (r *PodReconciler) createPredicate() predicate.Funcs {
 	key := r.AnnotationKey
 	if key == "" {
 		key = AnnotationKey
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Pod{}).
-		WithOptions(controller.Options{MaxConcurrentReconciles: concurrentReconciles}).
-		WithEventFilter(predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool {
-				pod := e.Object.(*corev1.Pod)
-				_, hasAnnotation := pod.Annotations[key]
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			pod := e.Object.(*corev1.Pod)
+			_, hasAnnotation := pod.Annotations[key]
+			return hasAnnotation
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPod := e.ObjectOld.(*corev1.Pod)
+			newPod := e.ObjectNew.(*corev1.Pod)
+
+			oldAnnotation := oldPod.Annotations[key]
+			newAnnotation := newPod.Annotations[key]
+
+			// Reconcile if annotation changed
+			if oldAnnotation != newAnnotation {
+				return true
+			}
+
+			// Reconcile if pod got an IP for the first time
+			if oldPod.Status.PodIP == "" && newPod.Status.PodIP != "" {
+				_, hasAnnotation := newPod.Annotations[key]
 				return hasAnnotation
-			},
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				oldPod := e.ObjectOld.(*corev1.Pod)
-				newPod := e.ObjectNew.(*corev1.Pod)
+			}
 
-				oldAnnotation := oldPod.Annotations[key]
-				newAnnotation := newPod.Annotations[key]
+			// Reconcile if pod is being deleted and has our finalizer
+			if newPod.DeletionTimestamp != nil && controllerutil.ContainsFinalizer(newPod, finalizerName) {
+				return true
+			}
 
-				// Reconcile if annotation changed
-				if oldAnnotation != newAnnotation {
-					return true
-				}
-
-				// Reconcile if pod got an IP for the first time
-				if oldPod.Status.PodIP == "" && newPod.Status.PodIP != "" {
-					_, hasAnnotation := newPod.Annotations[key]
-					return hasAnnotation
-				}
-
-				// Reconcile if pod is being deleted and has our finalizer
-				if newPod.DeletionTimestamp != nil && controllerutil.ContainsFinalizer(newPod, finalizerName) {
-					return true
-				}
-
-				return false
-			},
-			DeleteFunc: func(e event.DeleteEvent) bool {
-				// We handle deletion via finalizers
-				return false
-			},
-		}).
-		Complete(r)
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			// We handle deletion via finalizers
+			return false
+		},
+	}
 }
