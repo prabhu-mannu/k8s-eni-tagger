@@ -17,6 +17,14 @@ import (
 	"github.com/aws/smithy-go"
 )
 
+// EC2API defines the interface for EC2 operations used by this package
+// This allows for mocking in tests
+type EC2API interface {
+	DescribeNetworkInterfaces(ctx context.Context, params *ec2.DescribeNetworkInterfacesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error)
+	CreateTags(ctx context.Context, params *ec2.CreateTagsInput, optFns ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
+	DeleteTags(ctx context.Context, params *ec2.DeleteTagsInput, optFns ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error)
+}
+
 // ENIInfo contains details about an Elastic Network Interface
 type ENIInfo struct {
 	ID            string
@@ -54,7 +62,7 @@ func DefaultRateLimitConfig() RateLimitConfig {
 }
 
 type defaultClient struct {
-	ec2Client   *ec2.Client
+	ec2Client   EC2API
 	rateLimiter *rateLimiter
 }
 
@@ -128,8 +136,17 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 }
 
 // GetEC2Client returns the underlying EC2 client for sharing with other components
+// GetEC2Client returns the underlying EC2 client for sharing with other components
+// Note: This now returns an interface, callers may need to type assert if they need the specific struct
+// but for general usage the interface should suffice if extended.
+// However, since we return *ec2.Client in the interface, we might have to cast it or change the interface return type.
+// To avoid breaking changes, we'll keep the signature but cast if possible, or better yet,
+// since we know in production it's *ec2.Client, we can type assert.
 func (c *defaultClient) GetEC2Client() *ec2.Client {
-	return c.ec2Client
+	if client, ok := c.ec2Client.(*ec2.Client); ok {
+		return client
+	}
+	return nil
 }
 
 // GetENIInfoByIP finds the ENI details associated with a private IP address

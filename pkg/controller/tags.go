@@ -3,13 +3,13 @@ package controller
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// parseTags parses a comma-separated tag string into a map of key-value pairs.
-// The input format is "key1=value1,key2=value2,...".
+// parseTags parses a JSON tag string into a map of key-value pairs.
 // It validates each tag against AWS constraints:
 //   - Key length must not exceed MaxTagKeyLength (127 characters)
 //   - Value length must not exceed MaxTagValueLength (255 characters)
@@ -24,58 +24,48 @@ func parseTags(tagStr string) (map[string]string, error) {
 		return make(map[string]string), nil
 	}
 
-	tags := make(map[string]string)
-	parts := strings.Split(tagStr, ",")
+	var tags map[string]string
+	if err := json.Unmarshal([]byte(tagStr), &tags); err != nil {
+		return nil, fmt.Errorf("failed to parse tags: %w", err)
+	}
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue // Skip empty parts from multiple commas
+	// Validate tags using same logic as validateTags
+	// Note: We duplicate some logic here or we could export validateTags logic.
+	// Since validateTags is in same package, we can just call it?
+	// validateTags takes string input, not map.
+	// Let's implement validation on the map here.
+
+	if len(tags) > MaxTagsPerENI {
+		return nil, fmt.Errorf("too many tags (%d), AWS limit is %d", len(tags), MaxTagsPerENI)
+	}
+
+	for key, value := range tags {
+		// Key length
+		if len(key) == 0 || len(key) > MaxTagKeyLength {
+			return nil, fmt.Errorf("tag key length must be 1-%d characters: %q", MaxTagKeyLength, key)
 		}
 
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid tag format (missing '='): %s", part)
-		}
-
-		key := strings.TrimSpace(kv[0])
-		value := strings.TrimSpace(kv[1])
-
-		if key == "" {
-			return nil, fmt.Errorf("empty tag key in: %s", part)
-		}
-
-		// Validate key length
-		if len(key) > MaxTagKeyLength {
-			return nil, fmt.Errorf("tag key exceeds %d characters: %s", MaxTagKeyLength, key)
-		}
-
-		// Validate value length
+		// Value length
 		if len(value) > MaxTagValueLength {
-			return nil, fmt.Errorf("tag value exceeds %d characters for key %s", MaxTagValueLength, key)
+			return nil, fmt.Errorf("tag value length must be 0-%d characters: for key %q", MaxTagValueLength, key)
 		}
 
-		// Check for reserved prefixes
+		// Reserved prefixes
 		for _, prefix := range reservedPrefixes {
 			if strings.HasPrefix(key, prefix) {
-				return nil, fmt.Errorf("tag key uses reserved prefix '%s': %s", prefix, key)
+				return nil, fmt.Errorf("tag key cannot start with reserved prefix %q: %q", prefix, key)
 			}
 		}
 
-		// Validate characters
+		// Key pattern
 		if !tagKeyPattern.MatchString(key) {
-			return nil, fmt.Errorf("tag key contains invalid characters: %s", key)
-		}
-		if value != "" && !tagValuePattern.MatchString(value) {
-			return nil, fmt.Errorf("tag value contains invalid characters for key %s", key)
+			return nil, fmt.Errorf("invalid tag key format: %q", key)
 		}
 
-		tags[key] = value
-	}
-
-	// Check total tag count
-	if len(tags) > MaxTagsPerENI {
-		return nil, fmt.Errorf("too many tags (%d), AWS limit is %d", len(tags), MaxTagsPerENI)
+		// Value pattern
+		if !tagValuePattern.MatchString(value) {
+			return nil, fmt.Errorf("invalid tag value format: %q", value)
+		}
 	}
 
 	return tags, nil
