@@ -54,7 +54,7 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	for ip, data := range cm.Data {
 		var info aws.ENIInfo
 		if err := json.Unmarshal([]byte(data), &info); err != nil {
-			logger.Error(err, "Failed to unmarshal ENI info, skipping", "ip", ip)
+			logger.Info("Failed to unmarshal ENI info, skipping entry", "ip", ip, "error", err.Error())
 			continue
 		}
 		result[ip] = &info
@@ -106,7 +106,7 @@ func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENII
 	cm.Data[ip] = string(data)
 
 	if err := p.client.Update(ctx, cm); err != nil {
-		return fmt.Errorf("failed to update ConfigMap: %w", err)
+		return fmt.Errorf("failed to update ConfigMap for IP %s: %w", ip, err)
 	}
 
 	return nil
@@ -134,7 +134,7 @@ func (p *configMapPersister) Delete(ctx context.Context, ip string) error {
 	delete(cm.Data, ip)
 
 	if err := p.client.Update(ctx, cm); err != nil {
-		return fmt.Errorf("failed to update ConfigMap: %w", err)
+		return fmt.Errorf("failed to update ConfigMap for IP %s: %w", ip, err)
 	}
 
 	return nil
