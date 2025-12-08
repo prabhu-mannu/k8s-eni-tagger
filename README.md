@@ -32,7 +32,26 @@ The controller interacts with the AWS EC2 API, which has strict rate limits.
 ### Prerequisites
 
 - Kubernetes Cluster (EKS recommended)
-- AWS IAM Permissions (see [IAM Policy](iam_policy.md))
+- AWS IAM Permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+**Note**: Attach this policy to the service account (via IRSA) or the node IAM role.
 
 ### Deploy with Manifests
 

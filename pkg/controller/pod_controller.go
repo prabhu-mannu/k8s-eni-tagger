@@ -13,8 +13,10 @@ import (
 
 // Reconcile handles the reconciliation of a Pod resource.
 // It manages ENI tagging based on pod annotations and handles cleanup on deletion.
+// Reconcile handles the reconciliation of a Pod resource.
+// It manages ENI tagging based on pod annotations and handles cleanup on deletion.
 func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).WithValues("pod", req.NamespacedName)
 
 	// Fetch the Pod
 	pod := &corev1.Pod{}
@@ -47,18 +49,16 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(pod, finalizerName) {
-		controllerutil.AddFinalizer(pod, finalizerName)
-		if err := r.Update(ctx, pod); err != nil {
-			return ctrl.Result{}, err
-		}
+	if updated, err := r.ensureFinalizer(ctx, pod); err != nil {
+		return ctrl.Result{}, err
+	} else if updated {
 		// Requeue to continue processing
 		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Validate tags
 	if err := validateTags(annotationValue); err != nil {
-		logger.Error(err, "Invalid tags in annotation")
+		logger.Error(err, "Invalid tags in annotation", "tags", annotationValue)
 		r.Recorder.Event(pod, corev1.EventTypeWarning, "InvalidTags", err.Error())
 		if err := r.updateStatus(ctx, pod, corev1.ConditionFalse, "InvalidTags", err.Error()); err != nil {
 			logger.Error(err, "Failed to update status")
@@ -69,7 +69,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// Get ENI info
 	eniInfo, err := r.getENIInfo(ctx, pod.Status.PodIP)
 	if err != nil {
-		logger.Error(err, "Failed to get ENI info")
+		logger.Error(err, "Failed to get ENI info", "podIP", pod.Status.PodIP)
 		r.Recorder.Event(pod, corev1.EventTypeWarning, "ENILookupFailed", err.Error())
 		if statusErr := r.updateStatus(ctx, pod, corev1.ConditionFalse, "ENILookupFailed", err.Error()); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status")
@@ -80,7 +80,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// Validate ENI
 	if err := r.validateENI(ctx, eniInfo); err != nil {
-		logger.Error(err, "ENI validation failed")
+		logger.Error(err, "ENI validation failed", "eniID", eniInfo.ID)
 		r.Recorder.Event(pod, corev1.EventTypeWarning, "ENIValidationFailed", err.Error())
 		if err := r.updateStatus(ctx, pod, corev1.ConditionFalse, "ENIValidationFailed", err.Error()); err != nil {
 			logger.Error(err, "Failed to update status")
@@ -90,7 +90,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// Apply tags
 	if err := r.applyENITags(ctx, pod, eniInfo, annotationValue); err != nil {
-		logger.Error(err, "Failed to apply ENI tags")
+		logger.Error(err, "Failed to apply ENI tags", "eniID", eniInfo.ID)
 		r.Recorder.Event(pod, corev1.EventTypeWarning, "TaggingFailed", err.Error())
 		if err := r.updateStatus(ctx, pod, corev1.ConditionFalse, "TaggingFailed", err.Error()); err != nil {
 			logger.Error(err, "Failed to update status")
@@ -100,4 +100,17 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	logger.Info("Successfully reconciled pod", "eniID", eniInfo.ID)
 	return ctrl.Result{}, nil
+}
+
+// ensureFinalizer adds the finalizer to the pod if it's missing.
+// Returns true if the pod was updated, false otherwise.
+func (r *PodReconciler) ensureFinalizer(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	if !controllerutil.ContainsFinalizer(pod, finalizerName) {
+		controllerutil.AddFinalizer(pod, finalizerName)
+		if err := r.Update(ctx, pod); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
