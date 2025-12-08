@@ -1,7 +1,8 @@
 # k8s-eni-tagger
 
-![Build Status](https://github.com/prabhu/k8s-eni-tagger/actions/workflows/test.yaml/badge.svg)
-![Go Version](https://img.shields.io/github/go-mod/go-version/prabhu/k8s-eni-tagger)
+![Build Status](https://github.com/prabhu-mannu/k8s-eni-tagger/actions/workflows/test.yaml/badge.svg)
+![Release](https://img.shields.io/github/v/release/prabhu-mannu/k8s-eni-tagger)
+![Go Version](https://img.shields.io/github/go-mod/go-version/prabhu-mannu/k8s-eni-tagger)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
 **k8s-eni-tagger** is a Kubernetes controller that automatically tags AWS Elastic Network Interfaces (ENIs) associated with Pods based on Pod annotations. This allows you to propagate metadata from Kubernetes Pods to AWS resources for cost allocation, security groups, or automation.
@@ -32,6 +33,7 @@ The controller interacts with the AWS EC2 API, which has strict rate limits.
 ### Prerequisites
 
 - Kubernetes Cluster (EKS recommended)
+- kubectl configured to access your cluster
 - AWS IAM Permissions:
 
 ```json
@@ -53,7 +55,21 @@ The controller interacts with the AWS EC2 API, which has strict rate limits.
 
 **Note**: Attach this policy to the service account (via IRSA) or the node IAM role.
 
+### Deploy with Helm (Recommended)
+
+```bash
+helm repo add k8s-eni-tagger https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/
+helm repo update
+helm install k8s-eni-tagger k8s-eni-tagger/k8s-eni-tagger --namespace kube-system
+```
+
 ### Deploy with Manifests
+
+```bash
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/manifests.yaml
+```
+
+Or locally:
 
 ```bash
 kubectl apply -f deploy/manifests.yaml
