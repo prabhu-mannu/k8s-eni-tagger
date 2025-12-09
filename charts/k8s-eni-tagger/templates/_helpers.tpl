@@ -60,3 +60,15 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Determine if leader election should be enabled
+Automatically enabled when replicaCount > 1
+*/}}
+{{- define "k8s-eni-tagger.leaderElectionEnabled" -}}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- true }}
+{{- else }}
+{{- .Values.config.enableLeaderElection }}
+{{- end }}
+{{- end }}
