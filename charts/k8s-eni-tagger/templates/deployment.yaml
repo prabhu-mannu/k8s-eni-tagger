@@ -11,18 +11,24 @@ spec:
       {{- include "k8s-eni-tagger.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "k8s-eni-tagger.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "k8s-eni-tagger.serviceAccountName" . }}
+      {{- if not (kindIs "invalid" .Values.serviceAccount.automountServiceAccountToken) }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -34,11 +40,16 @@ spec:
           args:
             - --annotation-key={{ .Values.config.annotationKey }}
             - --max-concurrent-reconciles={{ .Values.config.maxConcurrentReconciles }}
+            - --metrics-bind-address={{ .Values.config.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.config.healthProbeBindAddress }}
             {{- if .Values.config.watchNamespace }}
             - --watch-namespace={{ .Values.config.watchNamespace }}
             {{- end }}
             {{- if .Values.config.dryRun }}
             - --dry-run
+            {{- end }}
+            {{- if .Values.config.enableLeaderElection }}
+            - --leader-elect
             {{- end }}
             {{- if .Values.config.subnetIDs }}
             - --subnet-ids={{ .Values.config.subnetIDs }}
@@ -55,20 +66,21 @@ spec:
             - --aws-rate-limit-qps={{ .Values.config.awsRateLimitQPS }}
             - --aws-rate-limit-burst={{ .Values.config.awsRateLimitBurst }}
             - --pprof-bind-address={{ .Values.config.pprofBindAddress }}
-            - --metrics-bind-address=:8090
-          {{- if .Values.env }}
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - name: metrics
-              containerPort: 8090
+              containerPort: {{ .Values.health.port | default 8090 }}
               protocol: TCP
             - name: health
-              containerPort: 8081
+              containerPort: {{ .Values.health.port | default 8081 }}
               protocol: TCP
           livenessProbe:
             httpGet:
@@ -84,6 +96,14 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
