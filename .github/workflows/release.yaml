@@ -80,6 +80,20 @@ jobs:
           helm package charts/k8s-eni-tagger --destination .
           helm repo index . --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
 
+      - name: Push Helm Chart to GHCR OCI Registry
+        run: |
+          helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          CHART_TGZ=$(ls k8s-eni-tagger-*.tgz)
+          helm push ${CHART_TGZ} oci://ghcr.io/${{ github.repository_owner }}/charts
+          echo "✅ Helm chart pushed to: oci://ghcr.io/${{ github.repository_owner }}/charts"
+
+      - name: Run Chart Releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: charts
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:

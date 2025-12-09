@@ -3,7 +3,7 @@ name: k8s-eni-tagger
 description: A Helm chart for Kubernetes ENI Tagger Controller - automatically tags AWS ENIs based on Pod annotations
 type: application
 version: 0.3.0
-appVersion: "v0.1.0"
+appVersion: "0.2.1"
 keywords:
   - kubernetes
   - aws
