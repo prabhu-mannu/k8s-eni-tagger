@@ -1,0 +1,90 @@
+# Example values for production deployment with IRSA and HA
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/prabhu-mannu/k8s-eni-tagger
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+
+serviceAccount:
+  create: true
+  annotations:
+    # Replace with your IAM role ARN
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/k8s-eni-tagger
+  automountServiceAccountToken: true
+
+# Pod annotations for security group binding (optional)
+podAnnotations:
+  # Uncomment and replace with your security group IDs
+  # vpc.amazonaws.com/pod-eni: '{"securityGroups": ["sg-xxxxxxxxx"]}'
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Enable metrics scraping
+metrics:
+  enabled: true
+  type: ClusterIP
+  port: 8090
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8090"
+    prometheus.io/path: "/metrics"
+
+# Controller configuration
+config:
+  annotationKey: "eni-tagger.io/tags"
+  watchNamespace: ""  # Watch all namespaces
+  maxConcurrentReconciles: 10
+  dryRun: false
+  enableLeaderElection: true  # Required for HA
+  metricsBindAddress: ":8090"
+  healthProbeBindAddress: ":8081"
+  
+  # Subnet filtering (optional)
+  # subnetIDs: "subnet-xxxxx,subnet-yyyyy"
+  
+  # WARNING: Use with caution
+  allowSharedENITagging: false
+  
+  # Cache configuration
+  enableENICache: true
+  enableCacheConfigMap: false
+  
+  # AWS API rate limiting
+  awsRateLimitQPS: 20
+  awsRateLimitBurst: 50
+  
+  # Disable profiling in production
+  pprofBindAddress: "0"
+
+# Environment variables (optional)
+env:
+  AWS_REGION: us-east-1
+
+# Anti-affinity for HA
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: k8s-eni-tagger
+          topologyKey: kubernetes.io/hostname
+
+# Node selector (optional - run on specific nodes)
+# nodeSelector:
+#   node.kubernetes.io/role: controller
+
+# Tolerations (optional - allow scheduling on control plane nodes)
+# tolerations:
+#   - key: node-role.kubernetes.io/control-plane
+#     operator: Exists
+#     effect: NoSchedule

@@ -1,6 +1,18 @@
 apiVersion: v2
 name: k8s-eni-tagger
-description: A Helm chart for Kubernetes ENI Tagger Controller
+description: A Helm chart for Kubernetes ENI Tagger Controller - automatically tags AWS ENIs based on Pod annotations
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.3.0
+appVersion: "v0.1.0"
+keywords:
+  - kubernetes
+  - aws
+  - eni
+  - eks
+  - tagging
+home: https://github.com/prabhu-mannu/k8s-eni-tagger
+sources:
+  - https://github.com/prabhu-mannu/k8s-eni-tagger
+maintainers:
+  - name: prabhu-mannu
+    url: https://github.com/prabhu-mannu
