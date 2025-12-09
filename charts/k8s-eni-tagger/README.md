@@ -23,25 +23,47 @@ A Helm chart for deploying the k8s-eni-tagger controller, which automatically ta
 
 ## Installation
 
-### Add the Helm repository
+Multiple installation methods are available:
+
+### Method 1: OCI Registry (Recommended)
+
+Install directly from GHCR OCI registry:
+
+```bash
+helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.3.0 \
+  --namespace kube-system \
+  --create-namespace
+```
+
+### Method 2: Helm Repository (GitHub Pages)
+
+Add the Helm repository:
 
 ```bash
 helm repo add k8s-eni-tagger https://prabhu-mannu.github.io/k8s-eni-tagger
 helm repo update
-```
-
-### Install the chart
-
-```bash
 helm install k8s-eni-tagger k8s-eni-tagger/k8s-eni-tagger \
   --namespace kube-system \
   --create-namespace
 ```
 
-### Install with custom values
+### Method 3: From GitHub Release (Tarball)
+
+Download from the GitHub release:
 
 ```bash
-helm install k8s-eni-tagger k8s-eni-tagger/k8s-eni-tagger \
+helm install k8s-eni-tagger \
+  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.2.1/k8s-eni-tagger-0.3.0.tgz \
+  --namespace kube-system \
+  --create-namespace
+```
+
+### Install with Custom Values
+
+```bash
+helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.3.0 \
   --namespace kube-system \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::123456789012:role/k8s-eni-tagger" \
   --set config.enableLeaderElection=true \
