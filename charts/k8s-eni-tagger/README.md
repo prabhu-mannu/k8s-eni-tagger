@@ -290,12 +290,39 @@ config:
   watchNamespace: test
 ```
 
+## Versioning
+
+This chart follows [Semantic Versioning 2.0.0](https://semver.org/):
+
+- **Chart version = App version = Release tag**: All versions are synchronized for simplicity (e.g., chart 0.1.0 = app 0.1.0 = release v0.1.0)
+- **MAJOR** (X.0.0): Breaking changes to chart structure or application behavior
+- **MINOR** (0.X.0): New features added in a backward-compatible manner
+- **PATCH** (0.0.X): Backward-compatible bug fixes
+
+**When upgrading the chart**, always check the [CHANGELOG.md](../../CHANGELOG.md) for breaking changes and migration instructions.
+
 ## Upgrading
 
+### Upgrade to a specific version:
+
 ```bash
+# Using OCI Registry (recommended)
+helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.1.0 \
+  --namespace kube-system \
+  --values values.yaml
+
+# Using Helm Repository
+helm repo update
 helm upgrade k8s-eni-tagger k8s-eni-tagger/k8s-eni-tagger \
   --namespace kube-system \
   --values values.yaml
+```
+
+### Check current version:
+
+```bash
+helm list -n kube-system
 ```
 
 ## Uninstalling
@@ -312,3 +339,4 @@ See [values.yaml](values.yaml) for the full list of configurable parameters.
 
 - GitHub Issues: https://github.com/prabhu-mannu/k8s-eni-tagger/issues
 - Documentation: https://github.com/prabhu-mannu/k8s-eni-tagger
+- CHANGELOG: https://github.com/prabhu-mannu/k8s-eni-tagger/blob/main/CHANGELOG.md

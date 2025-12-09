@@ -143,6 +143,31 @@ The controller uses the **Kubernetes Controller Runtime** library.
     - Calls `ec2:CreateTags` or `ec2:DeleteTags` as needed.
 4.  **Status**: Updates Pod status conditions (`eni-tagger.io/tagged`).
 
+## 🔄 Versioning
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/):
+
+- **Chart version = App version = Release tag**: For simplicity, all versions are synchronized (e.g., chart 0.1.0 = app 0.1.0 = release v0.1.0)
+- **MAJOR** (X.0.0): Breaking changes to the API or behavior
+- **MINOR** (0.X.0): New features added in a backward-compatible manner
+- **PATCH** (0.0.X): Backward-compatible bug fixes
+
+### Upgrading
+
+To upgrade to a new version:
+
+```bash
+# Using Helm (OCI Registry)
+helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.1.0 \
+  --namespace kube-system
+
+# Using kubectl with manifests
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/manifests.yaml
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+
 ## 🤝 Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute.
