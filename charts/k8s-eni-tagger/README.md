@@ -31,7 +31,7 @@ Install directly from GHCR OCI registry:
 
 ```bash
 helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.3.0 \
+  --version 0.1.0 \
   --namespace kube-system \
   --create-namespace
 ```
@@ -54,7 +54,7 @@ Download from the GitHub release:
 
 ```bash
 helm install k8s-eni-tagger \
-  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.2.1/k8s-eni-tagger-0.3.0.tgz \
+  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/k8s-eni-tagger-0.1.0.tgz \
   --namespace kube-system \
   --create-namespace
 ```
@@ -63,7 +63,7 @@ helm install k8s-eni-tagger \
 
 ```bash
 helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.3.0 \
+  --version 0.1.0 \
   --namespace kube-system \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::123456789012:role/k8s-eni-tagger" \
   --set config.enableLeaderElection=true \
