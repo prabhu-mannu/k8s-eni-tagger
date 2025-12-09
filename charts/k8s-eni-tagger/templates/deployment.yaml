@@ -48,7 +48,7 @@ spec:
             {{- if .Values.config.dryRun }}
             - --dry-run
             {{- end }}
-            {{- if .Values.config.enableLeaderElection }}
+            {{- if eq (include "k8s-eni-tagger.leaderElectionEnabled" .) "true" }}
             - --leader-elect
             {{- end }}
             {{- if .Values.config.subnetIDs }}

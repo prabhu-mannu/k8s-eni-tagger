@@ -2,6 +2,18 @@
 
 A Helm chart for deploying the k8s-eni-tagger controller, which automatically tags AWS Elastic Network Interfaces (ENIs) associated with Kubernetes Pods based on Pod annotations.
 
+## Features
+
+✅ **IRSA Support** - Full AWS IAM Roles for Service Accounts integration  
+✅ **Custom Service Account** - Use existing SA or create new with custom annotations  
+✅ **Security Group Binding** - Pod-level security group assignment via annotations  
+✅ **High Availability** - Automatic leader election when running multiple replicas  
+✅ **Metrics & Monitoring** - Built-in Prometheus metrics endpoint with Service  
+✅ **Flexible Configuration** - All controller flags exposed and configurable  
+✅ **Cache Persistence** - Optional ConfigMap-backed cache with automatic RBAC  
+✅ **Security Best Practices** - Control `automountServiceAccountToken`, run as non-root  
+✅ **Production Ready** - Resource limits, health checks, anti-affinity support  
+
 ## Prerequisites
 
 - Kubernetes 1.19+
@@ -69,14 +81,22 @@ podAnnotations:
 
 ### High Availability Setup
 
-Enable leader election for running multiple replicas:
+For high availability, simply set `replicaCount` > 1. Leader election is automatically enabled:
 
 ```yaml
-replicaCount: 2
+replicaCount: 2  # Leader election automatically enabled
+```
+
+You can also explicitly control leader election:
+
+```yaml
+replicaCount: 1
 
 config:
-  enableLeaderElection: true
+  enableLeaderElection: true  # Force enable even with single replica
 ```
+
+**Note:** When `replicaCount > 1`, leader election is automatically enabled regardless of the `enableLeaderElection` setting to prevent split-brain scenarios.
 
 ### Controller Configuration
 
@@ -86,7 +106,7 @@ config:
 | `config.watchNamespace` | Namespace to watch (empty = all) | `""` |
 | `config.maxConcurrentReconciles` | Concurrent reconciliation workers | `1` |
 | `config.dryRun` | Enable dry-run mode (no AWS changes) | `false` |
-| `config.enableLeaderElection` | Enable leader election for HA | `false` |
+| `config.enableLeaderElection` | Enable leader election for HA (auto-enabled when replicaCount > 1) | `false` |
 | `config.metricsBindAddress` | Metrics endpoint bind address | `:8090` |
 | `config.healthProbeBindAddress` | Health probe bind address | `:8081` |
 | `config.subnetIDs` | Comma-separated allowed subnet IDs | `""` |
