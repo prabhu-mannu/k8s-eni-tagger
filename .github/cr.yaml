@@ -1,0 +1,5 @@
+# Chart Releaser configuration
+# For more information: https://github.com/helm/chart-releaser
+
+# Enable GitHub releases creation
+release-name-template: '{{ .Version }}'
