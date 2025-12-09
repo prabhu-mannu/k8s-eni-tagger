@@ -70,10 +70,22 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}-debug
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Package Helm Chart
+        run: |
+          helm package charts/k8s-eni-tagger --destination .
+          helm repo index . --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             k8s-eni-tagger-linux-amd64
             k8s-eni-tagger-linux-arm64
+            k8s-eni-tagger-*.tgz
+            index.yaml
           generate_release_notes: true
