@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-12-09
+
+### Changed
+- Removed unreliable E2E test workflow
+- Streamlined CI/CD pipeline to focus on unit tests and Docker builds
+- E2E testing now recommended for local or dedicated environments
+
+---
+
 ## [0.2.0] - 2025-12-09
 
 ### Added - Helm Chart v0.3.0
