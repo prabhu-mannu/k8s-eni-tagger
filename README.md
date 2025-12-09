@@ -57,16 +57,30 @@ The controller interacts with the AWS EC2 API, which has strict rate limits.
 
 ### Deploy with Helm (Recommended)
 
+**Method 1: OCI Registry (Fastest)**
 ```bash
-helm repo add k8s-eni-tagger https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/
+helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.3.0 \
+  --namespace kube-system --create-namespace
+```
+
+**Method 2: Helm Repository**
+```bash
+helm repo add k8s-eni-tagger https://prabhu-mannu.github.io/k8s-eni-tagger
 helm repo update
 helm install k8s-eni-tagger k8s-eni-tagger/k8s-eni-tagger --namespace kube-system
+```
+
+**Method 3: GitHub Release (Tarball)**
+```bash
+helm install k8s-eni-tagger https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.2.1/k8s-eni-tagger-0.3.0.tgz \
+  --namespace kube-system --create-namespace
 ```
 
 ### Deploy with Manifests
 
 ```bash
-kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/manifests.yaml
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.2.1/manifests.yaml
 ```
 
 Or locally:
