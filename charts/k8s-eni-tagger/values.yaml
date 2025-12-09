@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/prabhu/k8s-eni-tagger
+  repository: ghcr.io/prabhu-mannu/k8s-eni-tagger
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
@@ -14,12 +14,25 @@ serviceAccount:
   # Specifies whether a service account should be created
   create: true
   # Annotations to add to the service account
+  # For IRSA (IAM Roles for Service Accounts), add:
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
   annotations: {}
+  # Labels to add to the service account
+  labels: {}
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
+  # If create is false, this must be set to an existing service account name
   name: ""
+  # Whether to automount the service account token
+  automountServiceAccountToken: true
 
+# Pod annotations (e.g., for EKS security group binding)
+# Example for security groups:
+# vpc.amazonaws.com/pod-eni: '{"securityGroups": ["sg-xxxxxxxxx"]}'
 podAnnotations: {}
+
+# Pod labels
+podLabels: {}
 
 podSecurityContext: {}
   # fsGroup: 2000
@@ -47,22 +60,78 @@ tolerations: []
 
 affinity: {}
 
+# Metrics service configuration
+metrics:
+  # Create a Service for metrics endpoint
+  enabled: true
+  # Service type (ClusterIP, NodePort, LoadBalancer)
+  type: ClusterIP
+  # Service port
+  port: 8090
+  # Service annotations (e.g., for Prometheus scraping)
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8090"
+    prometheus.io/path: "/metrics"
+
+# Health probe configuration
+health:
+  # Health probe port
+  port: 8081
+
 # Controller Configuration
 config:
+  # Annotation key to watch for tags
   annotationKey: "eni-tagger.io/tags"
+  # Namespace to watch for Pods. If empty, watches all namespaces
   watchNamespace: ""
+  # Maximum number of concurrent reconciles
   maxConcurrentReconciles: 1
+  # Enable dry-run mode (no AWS changes)
   dryRun: false
-  logLevel: "info"
-  # New configuration flags
+  # Enable leader election for HA deployments
+  enableLeaderElection: false
+  # Metrics bind address (format: :port or 0 to disable)
+  metricsBindAddress: ":8090"
+  # Health probe bind address
+  healthProbeBindAddress: ":8081"
+  # Comma-separated list of allowed Subnet IDs (or set via ENI_TAGGER_SUBNET_IDS env var)
   subnetIDs: ""
+  # Allow tagging of shared ENIs (e.g., standard EKS nodes). Use with caution
   allowSharedENITagging: false
+  # Enable in-memory ENI caching (cached until pod deletion)
   enableENICache: true
+  # Enable ConfigMap persistence for ENI cache (survives restarts)
   enableCacheConfigMap: false
+  # AWS API rate limit (requests per second)
   awsRateLimitQPS: 10
+  # AWS API rate limit burst size
   awsRateLimitBurst: 20
+  # Pprof bind address (set to '0' to disable profiling)
   pprofBindAddress: "0"
 
 # Extra environment variables (Map format for easier --set)
-env: {}
+# Example:
+# env:
 #   AWS_REGION: us-east-1
+#   AWS_DEFAULT_REGION: us-east-1
+env: {}
+
+# Extra environment variables from ConfigMaps or Secrets
+# Example:
+# envFrom:
+#   - configMapRef:
+#       name: my-config
+#   - secretRef:
+#       name: my-secret
+envFrom: []
+
+# Extra volumes to mount
+extraVolumes: []
+# - name: cache-volume
+#   emptyDir: {}
+
+# Extra volume mounts
+extraVolumeMounts: []
+# - name: cache-volume
+#   mountPath: /cache
