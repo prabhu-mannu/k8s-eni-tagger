@@ -25,40 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All controller flags exposed as configurable values
 - Production-ready example configuration (values-example.yaml)
 - Multi-channel Helm distribution (OCI registry, GitHub Pages, GitHub Release)
+- Multi-platform Docker images (amd64, arm64)
+- Dry-run mode for safe testing
+- Namespace filtering support
+- Prometheus metrics for monitoring (AWS API latency, operation counts, active workers)
+- Health check endpoints (readiness probe support)
+- Rate limiting configuration for AWS API calls
+- Comprehensive logging and error handling
+- Support for tag reconciliation (add missing, remove obsolete)
 
 ### CI/CD
 - GitHub Actions workflow for automated testing
 - Docker multi-platform builds (amd64, arm64)
 - Helm chart packaging and OCI registry push
 - Automated release creation with all assets
-helm install k8s-eni-tagger \
-  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.2.0/k8s-eni-tagger-0.3.0.tgz \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::ACCOUNT:role/ROLE"
-```
-
----
-
-## [0.1.0] - 2025-12-08
-
-### Added
-- Initial release of k8s-eni-tagger
-- Automatic ENI tagging based on Pod annotations
-- Support for `eni-tagger.io/tags` annotation on Kubernetes Pods
-- Multi-platform Docker images (amd64, arm64)
-- Dry-run mode for safe testing
-- Namespace filtering support
-- Prometheus metrics for monitoring:
-  - AWS API latency
-  - Operation counts
-  - Active worker tracking
-- Health check endpoints (readiness probe support)
-- Rate limiting configuration for AWS API calls
-- Comprehensive logging and error handling
-- Support for tag reconciliation (add missing, remove obsolete)
-- GitHub Actions workflows:
-  - Automated testing on push and pull requests
-  - Docker image building and pushing to ghcr.io
-  - Release workflow for tagged versions
+- Docker image building and pushing to ghcr.io
 
 ### Security
 - Minimal distroless base image (production build)
@@ -67,27 +48,37 @@ helm install k8s-eni-tagger \
 
 ---
 
+## Versioning Policy
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/):
+
+- **Chart version matches release tag**: For simplicity, the Helm chart version is synchronized with the application version and release tag (e.g., chart 0.1.0 = app 0.1.0 = release v0.1.0)
+- **MAJOR** version (X.0.0): Breaking changes to the API or behavior
+- **MINOR** version (0.X.0): New features added in a backward-compatible manner
+- **PATCH** version (0.0.X): Backward-compatible bug fixes
+
 ## How to Upgrade
 
-To upgrade from a previous version, pull the latest image from ghcr.io:
+### Using Helm (OCI Registry)
+
+```bash
+# Upgrade to latest version
+helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
+  --version 0.1.0 \
+  --namespace kube-system
+```
+
+### Using Docker
 
 ```bash
 docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:v0.1.0
 ```
 
-Or using Helm:
+### Using kubectl with Manifests
 
 ```bash
-helm upgrade k8s-eni-tagger ./charts/k8s-eni-tagger
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/manifests.yaml
 ```
-
-## Versioning Policy
-
-This project follows [Semantic Versioning 2.0.0](https://semver.org/):
-
-- **MAJOR** version (X.0.0): Breaking changes to the API or behavior
-- **MINOR** version (0.X.0): New features added in a backward-compatible manner
-- **PATCH** version (0.0.X): Backward-compatible bug fixes
 
 ## Release Process
 
