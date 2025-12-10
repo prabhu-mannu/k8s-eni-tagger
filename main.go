@@ -119,7 +119,12 @@ func main() {
 	setupLog.Info("AWS client initialized with rate limiting", "qps", cfg.AWSRateLimitQPS, "burst", cfg.AWSRateLimitBurst)
 
 	// Add health check using the shared EC2 client
-	awsChecker := health.NewAWSChecker(awsClient.GetEC2Client())
+	ec2HealthClient := &health.EC2HealthClient{EC2: awsClient.GetEC2Client()}
+	if err := ec2HealthClient.Validate(); err != nil {
+		setupLog.Error(err, "unable to initialize EC2 health client")
+		os.Exit(1)
+	}
+	awsChecker := health.NewAWSChecker(ec2HealthClient)
 	if err := mgr.AddReadyzCheck("aws-connectivity", awsChecker.Check); err != nil {
 		setupLog.Error(err, "unable to add readiness check")
 		os.Exit(1)
@@ -129,6 +134,8 @@ func main() {
 	var eniCache *enicache.ENICache
 	if cfg.EnableENICache {
 		eniCache = enicache.NewENICache(awsClient)
+		// Apply batch settings before enabling persistence
+		eniCache.SetBatchConfig(cfg.CacheBatchInterval, cfg.CacheBatchSize)
 
 		// Add ConfigMap persistence if enabled
 		if cfg.EnableCacheConfigMap {

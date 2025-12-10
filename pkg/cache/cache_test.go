@@ -111,6 +111,8 @@ func TestENICache_Persistence(t *testing.T) {
 		store: make(map[string]*aws.ENIInfo),
 	}
 	c.WithConfigMapPersister(mockPersister)
+	// speed up batching for tests
+	c.SetBatchConfig(10*time.Millisecond, 1)
 
 	// Test Save (Async)
 	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.2")
@@ -119,7 +121,7 @@ func TestENICache_Persistence(t *testing.T) {
 	}
 
 	// Wait for async save
-	time.Sleep(100 * time.Millisecond) // Flaky but simple for now
+	time.Sleep(50 * time.Millisecond)
 
 	mockPersister.mu.Lock()
 	if _, ok := mockPersister.store["10.0.0.2"]; !ok {
@@ -129,7 +131,7 @@ func TestENICache_Persistence(t *testing.T) {
 
 	// Test Delete (Async)
 	c.Invalidate(context.Background(), "10.0.0.2")
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	mockPersister.mu.Lock()
 	if _, ok := mockPersister.store["10.0.0.2"]; ok {

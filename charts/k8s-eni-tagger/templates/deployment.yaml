@@ -63,6 +63,8 @@ spec:
             {{- if .Values.config.enableCacheConfigMap }}
             - --enable-cache-configmap
             {{- end }}
+            - --cache-batch-interval={{ .Values.config.cacheBatchInterval }}
+            - --cache-batch-size={{ .Values.config.cacheBatchSize }}
             - --aws-rate-limit-qps={{ .Values.config.awsRateLimitQPS }}
             - --aws-rate-limit-burst={{ .Values.config.awsRateLimitBurst }}
             - --pprof-bind-address={{ .Values.config.pprofBindAddress }}
