@@ -3,12 +3,20 @@ package cache
 import (
 	"context"
 	"sync"
+	"time"
 
 	"k8s-eni-tagger/pkg/aws"
 	"k8s-eni-tagger/pkg/metrics"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// cacheUpdate represents a pending update to the ConfigMap
+type cacheUpdate struct {
+	op   string // "set" or "delete"
+	ip   string
+	info *aws.ENIInfo // nil for delete
+}
 
 // Cache defines the interface for ENI caching
 type Cache interface {
@@ -29,6 +37,13 @@ type ENICache struct {
 
 	// ConfigMap persistence (optional)
 	cmPersister ConfigMapPersister
+
+	// Batching/rate limiting
+	updateQueue   chan cacheUpdate
+	stopWorker    chan struct{}
+	batchInterval time.Duration
+	batchSize     int
+	workerOnce    sync.Once
 }
 
 // ConfigMapPersister interface for optional ConfigMap persistence
@@ -40,15 +55,31 @@ type ConfigMapPersister interface {
 
 // NewENICache creates a new ENI cache
 func NewENICache(awsClient aws.Client) *ENICache {
-	return &ENICache{
-		cache:     make(map[string]*aws.ENIInfo),
-		awsClient: awsClient,
+	c := &ENICache{
+		cache:         make(map[string]*aws.ENIInfo),
+		awsClient:     awsClient,
+		updateQueue:   make(chan cacheUpdate, 1000),
+		stopWorker:    make(chan struct{}),
+		batchInterval: 2 * time.Second, // configurable
+		batchSize:     20,              // configurable
+	}
+	return c
+}
+
+// SetBatchConfig updates batching parameters. Call before enabling ConfigMap persistence.
+func (c *ENICache) SetBatchConfig(interval time.Duration, size int) {
+	if interval > 0 {
+		c.batchInterval = interval
+	}
+	if size > 0 {
+		c.batchSize = size
 	}
 }
 
 // WithConfigMapPersister adds ConfigMap persistence to the cache
 func (c *ENICache) WithConfigMapPersister(persister ConfigMapPersister) *ENICache {
 	c.cmPersister = persister
+	c.ensureWorker()
 	return c
 }
 
@@ -109,13 +140,15 @@ func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo) {
 	c.cache[ip] = info
 	c.mu.Unlock()
 
-	// Async persist to ConfigMap if enabled
+	// Enqueue update for batching/rate limiting
 	if c.cmPersister != nil {
-		go func() {
-			if err := c.cmPersister.Save(ctx, ip, info); err != nil {
-				log.FromContext(ctx).Error(err, "Failed to persist ENI to ConfigMap", "ip", ip)
-			}
-		}()
+		c.ensureWorker()
+		select {
+		case c.updateQueue <- cacheUpdate{op: "set", ip: ip, info: info}:
+		default:
+			// queue full, drop update (log warning)
+			log.FromContext(ctx).Info("ConfigMap update queue full, dropping update", "ip", ip)
+		}
 	}
 }
 
@@ -126,11 +159,72 @@ func (c *ENICache) Invalidate(ctx context.Context, ip string) {
 	c.mu.Unlock()
 
 	if c.cmPersister != nil {
-		go func() {
-			if err := c.cmPersister.Delete(ctx, ip); err != nil {
-				log.FromContext(ctx).Error(err, "Failed to delete ENI from ConfigMap", "ip", ip)
+		c.ensureWorker()
+		select {
+		case c.updateQueue <- cacheUpdate{op: "delete", ip: ip}:
+		default:
+			log.FromContext(ctx).Info("ConfigMap update queue full, dropping delete", "ip", ip)
+		}
+	}
+
+}
+
+func (c *ENICache) ensureWorker() {
+	c.workerOnce.Do(func() {
+		go c.configMapWorker()
+	})
+}
+
+// configMapWorker batches and rate-limits ConfigMap updates
+func (c *ENICache) configMapWorker() {
+	batch := make([]cacheUpdate, 0, c.batchSize)
+	ticker := time.NewTicker(c.batchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.stopWorker:
+			return
+		case upd := <-c.updateQueue:
+			batch = append(batch, upd)
+			if len(batch) >= c.batchSize {
+				c.flushBatch(batch)
+				batch = batch[:0]
 			}
-		}()
+		case <-ticker.C:
+			if len(batch) > 0 {
+				c.flushBatch(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+}
+
+// flushBatch applies a batch of updates to the ConfigMap
+func (c *ENICache) flushBatch(batch []cacheUpdate) {
+	if c.cmPersister == nil || len(batch) == 0 {
+		return
+	}
+	// Group updates by op
+	setMap := make(map[string]*aws.ENIInfo)
+	delList := make([]string, 0)
+	for _, upd := range batch {
+		if upd.op == "set" {
+			setMap[upd.ip] = upd.info
+		} else if upd.op == "delete" {
+			delList = append(delList, upd.ip)
+		}
+	}
+	// Apply sets
+	for ip, info := range setMap {
+		if err := c.cmPersister.Save(context.Background(), ip, info); err != nil {
+			log.Log.Error(err, "Batch persist ENI to ConfigMap", "ip", ip)
+		}
+	}
+	// Apply deletes
+	for _, ip := range delList {
+		if err := c.cmPersister.Delete(context.Background(), ip); err != nil {
+			log.Log.Error(err, "Batch delete ENI from ConfigMap", "ip", ip)
+		}
 	}
 }
 

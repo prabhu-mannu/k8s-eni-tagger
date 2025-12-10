@@ -103,6 +103,9 @@ config:
   enableENICache: true
   # Enable ConfigMap persistence for ENI cache (survives restarts)
   enableCacheConfigMap: false
+  # ConfigMap cache persistence batching
+  cacheBatchInterval: 2s
+  cacheBatchSize: 20
   # AWS API rate limit (requests per second)
   awsRateLimitQPS: 10
   # AWS API rate limit burst size

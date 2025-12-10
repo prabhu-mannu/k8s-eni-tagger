@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds all application configuration
@@ -21,6 +22,8 @@ type Config struct {
 	AllowSharedENITagging   bool
 	EnableENICache          bool
 	EnableCacheConfigMap    bool
+	CacheBatchInterval      time.Duration
+	CacheBatchSize          int
 	AWSRateLimitQPS         float64
 	AWSRateLimitBurst       int
 	PprofBindAddress        string
@@ -47,6 +50,8 @@ func Load() (*Config, error) {
 	// ENI Cache flags
 	flag.BoolVar(&cfg.EnableENICache, "enable-eni-cache", true, "Enable in-memory ENI caching (cached until pod deletion).")
 	flag.BoolVar(&cfg.EnableCacheConfigMap, "enable-cache-configmap", false, "Enable ConfigMap persistence for ENI cache (survives restarts).")
+	flag.DurationVar(&cfg.CacheBatchInterval, "cache-batch-interval", 2*time.Second, "Batch interval for ConfigMap cache persistence (e.g., 2s).")
+	flag.IntVar(&cfg.CacheBatchSize, "cache-batch-size", 20, "Batch size for ConfigMap cache persistence.")
 
 	// Rate limiting flags
 	flag.Float64Var(&cfg.AWSRateLimitQPS, "aws-rate-limit-qps", 10, "AWS API rate limit (requests per second).")
