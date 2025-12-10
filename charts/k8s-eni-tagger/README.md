@@ -6,7 +6,7 @@ A Helm chart for deploying the k8s-eni-tagger controller, which automatically ta
 
 ✅ **IRSA Support** - Full AWS IAM Roles for Service Accounts integration  
 ✅ **Custom Service Account** - Use existing SA or create new with custom annotations  
-✅ **Security Group Binding** - Pod-level security group assignment via annotations  
+✅ **Security Groups for Pods** - Pod-level security groups via `SecurityGroupPolicy`  
 ✅ **High Availability** - Automatic leader election when running multiple replicas  
 ✅ **Metrics & Monitoring** - Built-in Prometheus metrics endpoint with Service  
 ✅ **Flexible Configuration** - All controller flags exposed and configurable  
@@ -92,14 +92,27 @@ serviceAccount:
   name: my-existing-service-account
 ```
 
-### EKS Security Group Binding
+### EKS Security Group Binding (Security Groups for Pods)
 
-To bind specific security groups to the controller pod:
+To attach additional security groups to the controller Pod, use an EKS `SecurityGroupPolicy` (security groups for Pods). The annotation `vpc.amazonaws.com/pod-eni` does **not** bind security groups. Example:
 
 ```yaml
-podAnnotations:
-  vpc.amazonaws.com/pod-eni: '{"securityGroups": ["sg-xxxxxxxxx", "sg-yyyyyyyyy"]}'
+apiVersion: vpcresources.k8s.aws/v1beta1
+kind: SecurityGroupPolicy
+metadata:
+  name: k8s-eni-tagger-sg
+  namespace: kube-system
+spec:
+  serviceAccountSelector:
+    matchLabels:
+      app.kubernetes.io/name: k8s-eni-tagger
+  securityGroups:
+    groupIds:
+      - sg-xxxxxxxxx
+      - sg-yyyyyyyyy
 ```
+
+Requirements: enable security groups for Pods in the VPC CNI (trunk/branch ENIs), and apply a `SecurityGroupPolicy` selecting the controller Pod (by service account or labels). See AWS docs: https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html
 
 ### High Availability Setup
 
@@ -135,6 +148,8 @@ config:
 | `config.allowSharedENITagging` | Allow tagging shared ENIs (WARNING) | `false` |
 | `config.enableENICache` | Enable in-memory ENI cache | `true` |
 | `config.enableCacheConfigMap` | Enable ConfigMap cache persistence | `false` |
+| `config.cacheBatchInterval` | Batch interval for ConfigMap cache persistence | `2s` |
+| `config.cacheBatchSize` | Batch size for ConfigMap cache persistence | `20` |
 | `config.awsRateLimitQPS` | AWS API rate limit (QPS) | `10` |
 | `config.awsRateLimitBurst` | AWS API burst limit | `20` |
 | `config.pprofBindAddress` | Pprof profiling endpoint (0=disabled) | `"0"` |
