@@ -79,7 +79,7 @@ spec:
           {{- end }}
           ports:
             - name: metrics
-              containerPort: {{ .Values.health.port | default 8090 }}
+              containerPort: {{ .Values.metrics.port | default 8090 }}
               protocol: TCP
             - name: health
               containerPort: {{ .Values.health.port | default 8081 }}
