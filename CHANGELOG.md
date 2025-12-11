@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2025-12-11
+
+### Fixed
+- Correct metrics container port in Helm chart to use the metrics port instead of the health probe port.
+
+---
+
 ## [0.1.0] - 2024-12-09
 
 ### Added
@@ -52,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This project follows [Semantic Versioning 2.0.0](https://semver.org/):
 
-- **Chart version matches release tag**: For simplicity, the Helm chart version is synchronized with the application version and release tag (e.g., chart 0.1.0 = app 0.1.0 = release v0.1.0)
+- **Chart version matches release tag**: For simplicity, the Helm chart version is synchronized with the application version and release tag (e.g., chart 0.1.1 = app 0.1.1 = release v0.1.1)
 - **MAJOR** version (X.0.0): Breaking changes to the API or behavior
 - **MINOR** version (0.X.0): New features added in a backward-compatible manner
 - **PATCH** version (0.0.X): Backward-compatible bug fixes
@@ -64,20 +71,20 @@ This project follows [Semantic Versioning 2.0.0](https://semver.org/):
 ```bash
 # Upgrade to latest version
 helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace kube-system
 ```
 
 ### Using Docker
 
 ```bash
-docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:v0.1.0
+docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:v0.1.1
 ```
 
 ### Using kubectl with Manifests
 
 ```bash
-kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.0/manifests.yaml
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.1/manifests.yaml
 ```
 
 ## Release Process
