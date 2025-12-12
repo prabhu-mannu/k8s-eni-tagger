@@ -78,7 +78,7 @@ helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
 ### Using Docker
 
 ```bash
-docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:v0.1.1
+docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:0.1.1
 ```
 
 ### Using kubectl with Manifests
