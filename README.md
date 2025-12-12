@@ -50,7 +50,7 @@ kind: Pod
 metadata:
   name: my-app
   annotations:
-    eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Environment=Production"
+    eni-tagger.io/tags: '{"CostCenter":"1234","Team":"Platform","Environment":"Production"}'
 spec:
   containers:
     - name: nginx

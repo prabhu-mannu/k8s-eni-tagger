@@ -18,6 +18,11 @@ func TestValidateTags(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "valid tags with capital letters",
+			annotation:  `{"CostCenter":"1234","Team":"Platform","Environment":"Production"}`,
+			expectError: false,
+		},
+		{
 			name:        "empty tags",
 			annotation:  `{}`,
 			expectError: true,
@@ -25,6 +30,11 @@ func TestValidateTags(t *testing.T) {
 		{
 			name:        "invalid JSON",
 			annotation:  `{invalid}`,
+			expectError: true,
+		},
+		{
+			name:        "comma-separated format (invalid - should be JSON)",
+			annotation:  `CostCenter=1234,Team=Platform,Env=Dev`,
 			expectError: true,
 		},
 		{

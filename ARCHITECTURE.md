@@ -69,7 +69,7 @@ The controller requires the following AWS IAM permissions to function:
 
 ## Data Flow
 
-1.  User creates a Pod with `eni-tagger.io/tags: "Team=Dev"`.
+1.  User creates a Pod with `eni-tagger.io/tags: '{"Team":"Dev"}'`.
 2.  Controller receives an event.
 3.  Controller checks if Pod has an IP. If not, it waits.
 4.  Controller checks the ENI cache first. If not cached, it calls AWS `DescribeNetworkInterfaces` with the Pod IP to find the ENI ID.
