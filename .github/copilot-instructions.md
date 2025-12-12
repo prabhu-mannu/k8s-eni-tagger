@@ -51,7 +51,7 @@ This guide enables AI coding agents to be immediately productive in the k8s-eni-
 ```yaml
 metadata:
   annotations:
-    eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
+    eni-tagger.io/tags: '{"CostCenter":"1234","Team":"Platform"}'
 ```
 
 ## Troubleshooting
