@@ -128,7 +128,7 @@ func TestParseAndCompareTags_Namespacing(t *testing.T) {
 				assert.Equal(t, tt.expectedLast, lastAppliedTags)
 				if diff != nil {
 					assert.Equal(t, tt.expectedToAdd, diff.toAdd)
-					assert.Equal(t, tt.expectedToRemove, diff.toRemove)
+					assert.ElementsMatch(t, tt.expectedToRemove, diff.toRemove)
 				}
 			}
 		})
