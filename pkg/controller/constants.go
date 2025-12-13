@@ -44,9 +44,9 @@ var (
 
 	// tagKeyPattern is the regex pattern for valid AWS tag keys.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
-	tagKeyPattern = regexp.MustCompile(`^[\w\s._\-:/=+@]{1,127}$`)
+	tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9 ._\-:/=+@]{1,127}$`)
 
 	// tagValuePattern is the regex pattern for valid AWS tag values.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
-	tagValuePattern = regexp.MustCompile(`^[\w\s._\-:/=+@]{0,255}$`)
+	tagValuePattern = regexp.MustCompile(`^[a-zA-Z0-9 ._\-:/=+@]{0,255}$`)
 )

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -63,8 +64,24 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, pod *corev1.Pod) 
 						// Also remove the hash tag
 						tagKeys = append(tagKeys, HashTagKey)
 
-						if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, tagKeys); err != nil {
-							logger.Error(err, "Failed to cleanup tags, continuing with finalizer removal")
+						// Retry transient failures for untag operations with exponential backoff
+						var uerr error
+						backoff := 100 * time.Millisecond
+						for i := 0; i < 3; i++ {
+							if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, tagKeys); err != nil {
+								uerr = err
+								if i == 2 {
+									break
+								}
+								time.Sleep(backoff)
+								backoff *= 2
+								continue
+							}
+							uerr = nil
+							break
+						}
+						if uerr != nil {
+							logger.Error(uerr, "Failed to cleanup tags, continuing with finalizer removal")
 						} else {
 							logger.Info("Cleaned up tags on pod deletion", "eniID", eniInfo.ID, "tags", tagKeys)
 						}

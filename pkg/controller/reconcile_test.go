@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,41 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-no-annotation",
 					Namespace: "default",
+				},
+				{
+					name: "Deletion - Untag transient errors with retries",
+					pod: &corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod-delete-retry",
+							Namespace: "default",
+							Annotations: map[string]string{
+								AnnotationKey:            validTags,
+								LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
+								LastAppliedHashKey:       "dummy-hash",
+							},
+							Finalizers:        []string{finalizerName},
+							DeletionTimestamp: &metav1.Time{Time: time.Now()},
+						},
+						Status: corev1.PodStatus{
+							PodIP: "10.0.0.6",
+						},
+					},
+					mockSetup: func(m *MockAWSClient) {
+						m.On("GetENIInfoByIP", mock.Anything, "10.0.0.6").Return(&aws.ENIInfo{
+							ID: "eni-delete-retry",
+							Tags: map[string]string{
+								HashTagKey: "dummy-hash",
+							},
+						}, nil)
+
+						// Simulate two transient failures then success
+						call := m.On("UntagENI", mock.Anything, "eni-delete-retry", mock.MatchedBy(func(keys []string) bool {
+							return true
+						}))
+						call.Return(errors.New("transient error")).Once()
+						call.Return(errors.New("transient error")).Once()
+						call.Return(nil).Once()
+					},
 				},
 			},
 			mockSetup: func(m *MockAWSClient) {}, // No calls expected
@@ -327,11 +363,14 @@ func TestReconcile(t *testing.T) {
 			recorder := record.NewFakeRecorder(10)
 
 			r := &PodReconciler{
-				Client:        k8sClient,
-				Scheme:        scheme,
-				Recorder:      recorder,
-				AWSClient:     mockAWS,
-				AnnotationKey: AnnotationKey,
+				Client:            k8sClient,
+				Scheme:            scheme,
+				Recorder:          recorder,
+				AWSClient:         mockAWS,
+				AnnotationKey:     AnnotationKey,
+				PodRateLimiters:   &sync.Map{},
+				PodRateLimitQPS:   0.1,
+				PodRateLimitBurst: 1,
 			}
 			// Enable namespacing for transition test
 			if tt.name == "Transition from non-namespaced to namespaced tags" {

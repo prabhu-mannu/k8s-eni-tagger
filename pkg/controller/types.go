@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"sync"
+
 	"k8s-eni-tagger/pkg/aws"
 	enicache "k8s-eni-tagger/pkg/cache"
 
@@ -27,4 +29,9 @@ type PodReconciler struct {
 	SubnetIDs             []string
 	AllowSharedENITagging bool
 	TagNamespace          string
+
+	// Per-pod rate limiters for DoS protection
+	PodRateLimiters   *sync.Map
+	PodRateLimitQPS   float64 // Requests per second per pod
+	PodRateLimitBurst int     // Burst size per pod
 }

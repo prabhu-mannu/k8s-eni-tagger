@@ -28,6 +28,11 @@ type Config struct {
 	AWSRateLimitBurst       int
 	PprofBindAddress        string
 	TagNamespace            string
+
+	// Per-pod rate limiting for DoS protection
+	PodRateLimitQPS            float64
+	PodRateLimitBurst          int
+	RateLimiterCleanupInterval time.Duration
 }
 
 // Load parses flags and environment variables to create a Config
@@ -63,6 +68,11 @@ func Load() (*Config, error) {
 
 	// Tag namespace flag
 	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value (including empty) disables namespacing.")
+
+	// Per-pod rate limiting flags
+	flag.Float64Var(&cfg.PodRateLimitQPS, "pod-rate-limit-qps", 0.1, "Per-pod reconciliation rate limit (requests per second). Default 0.1 = 1 reconciliation every 10 seconds per pod.")
+	flag.IntVar(&cfg.PodRateLimitBurst, "pod-rate-limit-burst", 1, "Per-pod rate limit burst size (allows brief bursts above QPS).")
+	flag.DurationVar(&cfg.RateLimiterCleanupInterval, "rate-limiter-cleanup-interval", 5*time.Minute, "Interval for cleaning up stale pod rate limiters (e.g., 5m).")
 
 	flag.Parse()
 

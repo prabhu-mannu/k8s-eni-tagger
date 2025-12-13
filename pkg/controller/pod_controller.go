@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,10 +14,23 @@ import (
 
 // Reconcile handles the reconciliation of a Pod resource.
 // It manages ENI tagging based on pod annotations and handles cleanup on deletion.
-// Reconcile handles the reconciliation of a Pod resource.
-// It manages ENI tagging based on pod annotations and handles cleanup on deletion.
 func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("pod", req.NamespacedName)
+
+	// Check per-pod rate limit (if enabled)
+	if r.PodRateLimitQPS > 0 {
+		limiterInterface, _ := r.PodRateLimiters.LoadOrStore(
+			req.String(),
+			rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
+		)
+		limiter := limiterInterface.(*rate.Limiter)
+
+		if !limiter.Allow() {
+			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
+			logger.V(1).Info("Rate limited, skipping reconciliation", "requeueAfter", requeueAfter)
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+	}
 
 	// Fetch the Pod
 	pod := &corev1.Pod{}

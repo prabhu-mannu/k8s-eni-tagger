@@ -6,6 +6,7 @@ import (
 	"net/http"
 	_ "net/http/pprof" // Register pprof handlers
 	"os"
+	"sync"
 
 	"k8s-eni-tagger/pkg/aws"
 	enicache "k8s-eni-tagger/pkg/cache"
@@ -156,7 +157,7 @@ func main() {
 		setupLog.Info("ENI caching enabled (lifecycle-based)", "configMapPersistence", cfg.EnableCacheConfigMap)
 	}
 
-	if err = (&controller.PodReconciler{
+	podReconciler := &controller.PodReconciler{
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		AWSClient:             awsClient,
@@ -167,10 +168,18 @@ func main() {
 		SubnetIDs:             cfg.SubnetIDs,
 		AllowSharedENITagging: cfg.AllowSharedENITagging,
 		TagNamespace:          cfg.TagNamespace,
-	}).SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {
+		PodRateLimiters:       &sync.Map{},
+		PodRateLimitQPS:       cfg.PodRateLimitQPS,
+		PodRateLimitBurst:     cfg.PodRateLimitBurst,
+	}
+
+	if err = podReconciler.SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
+
+	// Start rate limiter cleanup goroutine
+	podReconciler.StartRateLimiterCleanup(ctx, cfg.RateLimiterCleanupInterval)
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

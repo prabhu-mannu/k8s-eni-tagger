@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s-eni-tagger/pkg/aws"
 
@@ -104,8 +105,25 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 		}
 
 		if len(diff.toRemove) > 0 {
-			if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
-				return fmt.Errorf("failed to untag ENI: %w", err)
+			// Retry transient failures for untag operations with exponential backoff
+			var uerr error
+			backoff := 100 * time.Millisecond
+			for i := 0; i < 3; i++ {
+				if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
+					uerr = err
+					// If last attempt, exit loop and surface the error
+					if i == 2 {
+						break
+					}
+					time.Sleep(backoff)
+					backoff *= 2
+					continue
+				}
+				uerr = nil
+				break
+			}
+			if uerr != nil {
+				return fmt.Errorf("failed to untag ENI: %w", uerr)
 			}
 		}
 

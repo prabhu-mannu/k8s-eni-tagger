@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"k8s-eni-tagger/pkg/aws"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,12 +125,15 @@ func TestForeignTagsPreservation(t *testing.T) {
 	})).Return(nil)
 
 	r := &PodReconciler{
-		Client:        fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
-		Scheme:        scheme,
-		Recorder:      record.NewFakeRecorder(10),
-		AWSClient:     mockAWS,
-		AnnotationKey: AnnotationKey,
-		TagNamespace:  "enable",
+		Client:            fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		TagNamespace:      "enable",
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   0.1,
+		PodRateLimitBurst: 1,
 	}
 
 	// Run Reconcile
@@ -173,6 +177,8 @@ func TestForeignTagsPreservation(t *testing.T) {
 	})).Return(nil)
 
 	// Run Reconcile (Deletion)
+	// Reset the rate limiter for the deletion test since we're reconciling the same pod again
+	r.PodRateLimiters = &sync.Map{}
 	r.Client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	_, err = r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: client.ObjectKeyFromObject(pod),

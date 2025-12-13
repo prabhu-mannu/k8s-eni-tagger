@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -72,70 +73,66 @@ func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENII
 		return fmt.Errorf("failed to marshal ENI info: %w", err)
 	}
 
-	cm := &corev1.ConfigMap{}
-	err = p.client.Get(ctx, client.ObjectKey{
-		Namespace: p.namespace,
-		Name:      configMapName,
-	}, cm)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cm := &corev1.ConfigMap{}
+		err := p.client.Get(ctx, client.ObjectKey{
+			Namespace: p.namespace,
+			Name:      configMapName,
+		}, cm)
 
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Create new ConfigMap
-			cm = &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      configMapName,
-					Namespace: p.namespace,
-				},
-				Data: map[string]string{
-					ip: string(data),
-				},
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				// Create new ConfigMap
+				cm = &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      configMapName,
+						Namespace: p.namespace,
+					},
+					Data: map[string]string{
+						ip: string(data),
+					},
+				}
+				if err := p.client.Create(ctx, cm); err != nil {
+					return fmt.Errorf("failed to create ConfigMap: %w", err)
+				}
+				logger.Info("Created ENI cache ConfigMap", "ip", ip)
+				return nil
 			}
-			if err := p.client.Create(ctx, cm); err != nil {
-				return fmt.Errorf("failed to create ConfigMap: %w", err)
-			}
-			logger.Info("Created ENI cache ConfigMap", "ip", ip)
-			return nil
+			return err
 		}
-		return fmt.Errorf("failed to get ConfigMap: %w", err)
-	}
 
-	// Update existing ConfigMap
-	if cm.Data == nil {
-		cm.Data = make(map[string]string)
-	}
-	cm.Data[ip] = string(data)
+		// Update with resource version check
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		cm.Data[ip] = string(data)
 
-	if err := p.client.Update(ctx, cm); err != nil {
-		return fmt.Errorf("failed to update ConfigMap for IP %s: %w", ip, err)
-	}
-
-	return nil
+		return p.client.Update(ctx, cm)
+	})
 }
 
 // Delete removes a single ENI entry from the ConfigMap
 func (p *configMapPersister) Delete(ctx context.Context, ip string) error {
-	cm := &corev1.ConfigMap{}
-	err := p.client.Get(ctx, client.ObjectKey{
-		Namespace: p.namespace,
-		Name:      configMapName,
-	}, cm)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cm := &corev1.ConfigMap{}
+		err := p.client.Get(ctx, client.ObjectKey{
+			Namespace: p.namespace,
+			Name:      configMapName,
+		}, cm)
 
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil // Already gone
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil // Already gone
+			}
+			return err
 		}
-		return fmt.Errorf("failed to get ConfigMap: %w", err)
-	}
 
-	if cm.Data == nil {
-		return nil
-	}
+		if cm.Data == nil {
+			return nil
+		}
 
-	delete(cm.Data, ip)
+		delete(cm.Data, ip)
 
-	if err := p.client.Update(ctx, cm); err != nil {
-		return fmt.Errorf("failed to update ConfigMap for IP %s: %w", ip, err)
-	}
-
-	return nil
+		return p.client.Update(ctx, cm)
+	})
 }

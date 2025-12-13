@@ -17,6 +17,15 @@ import (
 	"github.com/aws/smithy-go"
 )
 
+// min returns the lesser of two float64 values.
+// It's intentionally local to avoid importing math just for a tiny helper.
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // EC2API defines the interface for EC2 operations used by this package
 // This allows for mocking in tests
 type EC2API interface {
@@ -85,10 +94,8 @@ func newRateLimiter(qps float64, burst int) *rateLimiter {
 }
 
 func (r *rateLimiter) Wait(ctx context.Context) error {
+	// Acquire lock and refill tokens
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Refill tokens based on elapsed time
 	now := time.Now()
 	elapsed := now.Sub(r.lastRefill).Seconds()
 	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
@@ -96,20 +103,23 @@ func (r *rateLimiter) Wait(ctx context.Context) error {
 
 	if r.tokens >= 1 {
 		r.tokens--
+		r.mu.Unlock()
 		return nil
 	}
 
-	// Calculate wait time for next token
+	// Calculate wait time for next token and release lock while waiting
 	waitTime := time.Duration((1-r.tokens)/r.refillRate*1000) * time.Millisecond
 	r.mu.Unlock()
 
 	select {
 	case <-ctx.Done():
-		r.mu.Lock()
+		// Context canceled while waiting
 		return ctx.Err()
 	case <-time.After(waitTime):
+		// After waiting, claim token (reset to 0 to avoid fractional issues)
 		r.mu.Lock()
-		r.tokens = 0 // Reset after wait
+		r.tokens = 0
+		r.mu.Unlock()
 		return nil
 	}
 }
@@ -195,8 +205,8 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	}
 
 	info := &ENIInfo{
-		ID:            *eni.NetworkInterfaceId,
-		SubnetID:      *eni.SubnetId,
+		ID:            aws.ToString(eni.NetworkInterfaceId),
+		SubnetID:      aws.ToString(eni.SubnetId),
 		InterfaceType: string(eni.InterfaceType),
 		Description:   aws.ToString(eni.Description),
 		Tags:          tags,
