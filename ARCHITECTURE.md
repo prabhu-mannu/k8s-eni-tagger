@@ -119,7 +119,7 @@ For enterprise multi-tenant scenarios, the controller supports tag namespace pre
 
 ## Data Flow
 
-1.  User creates a Pod with `eni-tagger.io/tags: "CostCenter=1234,Team=Platform"..
+1.  User creates a Pod with `eni-tagger.io/tags: "CostCenter=1234,Team=Platform"`
 2.  Controller receives an event.
 3.  Controller checks if Pod has an IP. If not, it waits.
 4.  Controller checks the ENI cache first. If not cached, it calls AWS `DescribeNetworkInterfaces` with the Pod IP to find the ENI ID.
