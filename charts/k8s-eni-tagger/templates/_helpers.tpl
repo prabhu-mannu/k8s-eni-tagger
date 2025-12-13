@@ -69,6 +69,6 @@ Automatically enabled when replicaCount > 1
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- true }}
 {{- else }}
-{{- .Values.config.enableLeaderElection }}
+{{- false }}
 {{- end }}
 {{- end }}

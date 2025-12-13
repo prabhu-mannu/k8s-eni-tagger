@@ -1,0 +1,94 @@
+# Pre-commit hooks for k8s-eni-tagger
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Go formatting and linting
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        description: Run 'go fmt' to format Go code
+      - id: go-vet
+        name: go vet
+        description: Run 'go vet' to check for Go code issues
+      - id: go-mod-tidy
+        name: go mod tidy
+        description: Ensure go.mod and go.sum are up to date
+
+  # golangci-lint - comprehensive Go linter
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.55.2
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint
+        description: Fast linters runner for Go
+        entry: golangci-lint run --fix
+        types: [go]
+        language: system
+        pass_filenames: false
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        name: yamllint
+        description: Lint YAML files
+        args: [--strict, -c, .yamllint.yaml]
+
+  # Helm chart linting
+  - repo: https://github.com/gruntwork-io/pre-commit
+    rev: v0.1.23
+    hooks:
+      - id: helmlint
+        name: helm lint
+        description: Lint Helm charts
+        entry: bash -c 'helm lint charts/k8s-eni-tagger'
+        language: system
+        files: charts/.*\.(yaml|tpl)$
+        pass_filenames: false
+
+  # Trailing whitespace and file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: trim trailing whitespace
+        description: Remove trailing whitespace
+      - id: end-of-file-fixer
+        name: fix end of files
+        description: Ensure files end with a newline
+      - id: check-yaml
+        name: check yaml
+        description: Check YAML syntax
+        args: [--allow-multiple-documents]
+        exclude: charts/.*templates/.*
+      - id: check-added-large-files
+        name: check for large files
+        description: Prevent large files from being committed
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+        name: check for merge conflicts
+        description: Check for merge conflict strings
+      - id: mixed-line-ending
+        name: fix mixed line endings
+        description: Ensure consistent line endings
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        description: Lint Markdown files
+        args: [--fix, --disable, MD013, MD033, MD041]
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint
+        name: hadolint
+        description: Lint Dockerfiles

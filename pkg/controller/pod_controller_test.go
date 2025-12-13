@@ -75,3 +75,44 @@ func TestValidateTags(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		tags      map[string]string
+		namespace string
+		expected  map[string]string
+	}{
+		{
+			name:      "no namespace",
+			tags:      map[string]string{"CostCenter": "1234", "Team": "Platform"},
+			namespace: "",
+			expected:  map[string]string{"CostCenter": "1234", "Team": "Platform"},
+		},
+		{
+			name:      "with namespace",
+			tags:      map[string]string{"CostCenter": "1234", "Team": "Platform"},
+			namespace: "acme-corp",
+			expected:  map[string]string{"acme-corp:CostCenter": "1234", "acme-corp:Team": "Platform"},
+		},
+		{
+			name:      "empty tags with namespace",
+			tags:      map[string]string{},
+			namespace: "acme-corp",
+			expected:  map[string]string{},
+		},
+		{
+			name:      "namespace with special characters",
+			tags:      map[string]string{"Env": "prod"},
+			namespace: "example-inc",
+			expected:  map[string]string{"example-inc:Env": "prod"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyNamespace(tt.tags, tt.namespace)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

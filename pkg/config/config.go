@@ -27,6 +27,7 @@ type Config struct {
 	AWSRateLimitQPS         float64
 	AWSRateLimitBurst       int
 	PprofBindAddress        string
+	TagNamespace            string
 }
 
 // Load parses flags and environment variables to create a Config
@@ -59,6 +60,9 @@ func Load() (*Config, error) {
 
 	// Pprof flag
 	flag.StringVar(&cfg.PprofBindAddress, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
+
+	// Tag namespace flag
+	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). Useful for multi-tenant scenarios.")
 
 	flag.Parse()
 
