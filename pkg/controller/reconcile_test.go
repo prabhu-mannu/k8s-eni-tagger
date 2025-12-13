@@ -200,7 +200,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: "default",
 					Annotations: map[string]string{
 						AnnotationKey:            validTags,
-						LastAppliedAnnotationKey: validTags,
+						LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
 						LastAppliedHashKey:       "dummy-hash",
 					},
 					Finalizers:        []string{finalizerName},
@@ -257,6 +257,65 @@ func TestReconcile(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "Transition from non-namespaced to namespaced tags",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-transition",
+					Namespace: "production",
+					Annotations: map[string]string{
+						AnnotationKey:            validTags, // CostCenter=123, Team=platform
+						LastAppliedAnnotationKey: validTags, // Old non-namespaced tags
+						LastAppliedHashKey:       "dummy-hash",
+					},
+					Finalizers: []string{finalizerName},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "10.0.0.4",
+				},
+			},
+			mockSetup: func(m *MockAWSClient) {
+				// ENI has old non-namespaced tags
+				m.On("GetENIInfoByIP", mock.Anything, "10.0.0.4").Return(&aws.ENIInfo{
+					ID: "eni-transition",
+					Tags: map[string]string{
+						"CostCenter": "123",
+						"Team":       "platform",
+						HashTagKey:   "dummy-hash",
+					},
+				}, nil)
+				// Should add namespaced tags and remove old ones
+				m.On("TagENI", mock.Anything, "eni-transition", mock.MatchedBy(func(tags map[string]string) bool {
+					// Should have production:cost-center and production:team
+					hasCost := tags["production:cost-center"] == "123"
+					hasTeam := tags["production:team"] == "platform"
+					return hasCost && hasTeam
+				})).Return(nil)
+				// Should remove old non-namespaced tags
+				m.On("UntagENI", mock.Anything, "eni-transition", mock.MatchedBy(func(keys []string) bool {
+					// Should remove cost-center, team (hash is updated via TagENI)
+					hasCost := false
+					hasTeam := false
+					for _, k := range keys {
+						if k == "cost-center" {
+							hasCost = true
+						}
+						if k == "team" {
+							hasTeam = true
+						}
+					}
+					return hasCost && hasTeam && len(keys) == 2
+				})).Return(nil)
+			},
+			verify: func(t *testing.T, k8sClient client.Client, m *MockAWSClient) {
+				// Check that last-applied was updated to namespaced tags
+				pod := &corev1.Pod{}
+				err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "pod-transition", Namespace: "production"}, pod)
+				assert.NoError(t, err)
+				// The last-applied should now contain namespaced tags
+				assert.Contains(t, pod.Annotations, LastAppliedAnnotationKey)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +332,10 @@ func TestReconcile(t *testing.T) {
 				Recorder:      recorder,
 				AWSClient:     mockAWS,
 				AnnotationKey: AnnotationKey,
+			}
+			// Enable namespacing for transition test
+			if tt.name == "Transition from non-namespaced to namespaced tags" {
+				r.TagNamespace = "enable"
 			}
 
 			req := reconcile.Request{

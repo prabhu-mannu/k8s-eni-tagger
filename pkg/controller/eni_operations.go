@@ -62,7 +62,7 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 	lastAppliedHash := pod.Annotations[LastAppliedHashKey]
 
 	// Parse and compare tags
-	currentTags, _, diff, err := parseAndCompareTags(ctx, pod, annotationValue, lastAppliedValue)
+	currentTags, _, diff, err := r.parseAndCompareTags(ctx, pod, annotationValue, lastAppliedValue)
 	if err != nil {
 		return fmt.Errorf("failed to parse tags: %w", err)
 	}

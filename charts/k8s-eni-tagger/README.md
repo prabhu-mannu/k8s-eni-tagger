@@ -94,7 +94,34 @@ serviceAccount:
 
 ### EKS Security Group Binding (Security Groups for Pods)
 
-To attach additional security groups to the controller Pod, use an EKS `SecurityGroupPolicy` (security groups for Pods). The annotation `vpc.amazonaws.com/pod-eni` does **not** bind security groups. Example:
+The chart supports EKS security groups for Pods via the `SecurityGroupPolicy` CRD. **Important:** The annotation `vpc.amazonaws.com/pod-eni` is NOT used for security group binding.
+
+#### Enable via Helm values:
+
+```yaml
+securityGroupPolicy:
+  enabled: true
+  groupIds:
+    - sg-0123456789abcdef0  # Controller pod security group
+```
+
+This creates a `SecurityGroupPolicy` CRD that attaches the specified security groups to controller pods.
+
+**Security Group Requirements:**
+- Must allow **inbound** from node security group for kubelet probes (port 8081)
+- Must allow **outbound TCP/UDP port 53** to CoreDNS security group
+- Must allow **outbound HTTPS (443)** to AWS APIs and Kubernetes API server
+- Must allow **inbound Prometheus scraping** if metrics are collected (port 8090)
+
+**Prerequisites:**
+1. EKS cluster VPC CNI configured for security groups for Pods:
+   ```bash
+   kubectl set env daemonset aws-node -n kube-system ENABLE_POD_ENI=true
+   ```
+2. Cluster IAM role has `AmazonEKSVPCResourceController` policy attached
+3. Nitro-based instance types (see [AWS limits.go](https://github.com/aws/amazon-vpc-resource-controller-k8s/blob/master/pkg/aws/vpc/limits.go))
+
+**Manual SecurityGroupPolicy example:**
 
 ```yaml
 apiVersion: vpcresources.k8s.aws/v1beta1
@@ -103,20 +130,32 @@ metadata:
   name: k8s-eni-tagger-sg
   namespace: kube-system
 spec:
-  serviceAccountSelector:
+  podSelector:
     matchLabels:
       app.kubernetes.io/name: k8s-eni-tagger
   securityGroups:
     groupIds:
-      - sg-xxxxxxxxx
-      - sg-yyyyyyyyy
+      - sg-0123456789abcdef0
 ```
 
-Requirements: enable security groups for Pods in the VPC CNI (trunk/branch ENIs), and apply a `SecurityGroupPolicy` selecting the controller Pod (by service account or labels). See AWS docs: https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html
+**References:**
+- [AWS Security Groups for Pods Documentation](https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html)
+- [SecurityGroupPolicy CRD Examples](https://docs.aws.amazon.com/eks/latest/userguide/sg-pods-example-deployment.html)
 
-### High Availability Setup
+### Network Policy
 
-For high availability, simply set `replicaCount` > 1. Leader election is automatically enabled:
+The chart includes an optional `NetworkPolicy` for controller pod network isolation:
+
+```yaml
+networkPolicy:
+  enabled: true
+```
+
+The NetworkPolicy allows:
+- **Ingress:** Prometheus metrics (8090), health probes (8081)
+- **Egress:** DNS (53), Kubernetes API (443/6443), AWS APIs (443)
+
+**Note:** Requires a network policy provider (Calico, Cilium, etc.)
 
 ```yaml
 replicaCount: 2  # Leader election automatically enabled
@@ -141,7 +180,6 @@ config:
 | `config.watchNamespace` | Namespace to watch (empty = all) | `""` |
 | `config.maxConcurrentReconciles` | Concurrent reconciliation workers | `1` |
 | `config.dryRun` | Enable dry-run mode (no AWS changes) | `false` |
-| `config.enableLeaderElection` | Enable leader election for HA (auto-enabled when replicaCount > 1) | `false` |
 | `config.metricsBindAddress` | Metrics endpoint bind address | `:8090` |
 | `config.healthProbeBindAddress` | Health probe bind address | `:8081` |
 | `config.subnetIDs` | Comma-separated allowed subnet IDs | `""` |
@@ -153,6 +191,15 @@ config:
 | `config.awsRateLimitQPS` | AWS API rate limit (QPS) | `10` |
 | `config.awsRateLimitBurst` | AWS API burst limit | `20` |
 | `config.pprofBindAddress` | Pprof profiling endpoint (0=disabled) | `"0"` |
+| `config.tagNamespace` | Tag namespacing control ('enable' = use pod namespace prefix) | `""` |
+
+### Security
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `securityGroupPolicy.enabled` | Enable SecurityGroupPolicy CRD for controller pods | `false` |
+| `securityGroupPolicy.groupIds` | Security group IDs to attach (1-5 groups) | `[]` |
+| `networkPolicy.enabled` | Enable NetworkPolicy for pod network isolation | `false` |
 
 ### Metrics
 
@@ -216,16 +263,43 @@ The controller requires the following IAM permissions:
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "ENITaggingPermissions",
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeNetworkInterfaces",
         "ec2:CreateTags",
         "ec2:DeleteTags"
       ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": ["us-west-2"]
+        }
+      }
+    },
+    {
+      "Sid": "HealthCheckPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAccountAttributes"
+      ],
       "Resource": "*"
     }
   ]
 }
+```
+
+**Required Permissions:**
+- `ec2:DescribeNetworkInterfaces`: Query ENI details by Pod IP address
+- `ec2:CreateTags`: Apply tags to ENIs
+- `ec2:DeleteTags`: Remove tags from ENIs when Pods are deleted
+- `ec2:DescribeAccountAttributes`: Startup health check to verify AWS API connectivity
+
+**Optional Conditions:**
+- `aws:RequestedRegion`: Restrict to specific AWS regions
+- `ec2:ResourceTag/*`: Limit to ENIs with specific tags
+
+**Note:** The `Resource: "*"` is required because ENI IDs are not known at policy creation time. Consider using SCP or resource tags for additional security
 ```
 
 ### Creating an IAM Role for IRSA
@@ -296,13 +370,24 @@ affinity:
           topologyKey: kubernetes.io/hostname
 ```
 
-### Dry-Run Mode for Testing
+### Enable Tag Namespacing
+
+Enable automatic pod namespace-based tag namespacing for multi-tenant environments:
 
 ```yaml
 # values.yaml
 config:
-  dryRun: true
-  watchNamespace: test
+  tagNamespace: enable  # Use pod's Kubernetes namespace as tag prefix
+```
+
+With namespacing enabled, a pod in the `production` namespace with annotation:
+```yaml
+eni-tagger.io/tags: '{"CostCenter":"123","Team":"Platform"}'
+```
+
+Will result in ENI tags:
+```
+production:CostCenter=123, production:Team=Platform
 ```
 
 ## Versioning

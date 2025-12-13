@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Tag Namespace Prefixing**: New `--tag-namespace` flag for enterprise multi-tenant scenarios to prevent tag conflicts
+- **NetworkPolicy Support**: Optional Kubernetes NetworkPolicy for controller pod network isolation
+- **SecurityGroupPolicy CRD**: Proper AWS security groups for Pods support using EKS SecurityGroupPolicy (replaces annotation-based approach)
+- **Automatic Pod Restarts**: Deployment includes checksum annotation for security group changes to trigger rolling updates
+- **Pre-commit Hooks**: Added comprehensive pre-commit configuration with golangci-lint, helm lint, yamllint, markdownlint, and hadolint
+- **Linting Targets**: New Makefile targets `make lint` and `make helm-lint` for code quality checks
+- **golangci-lint Configuration**: Added `.golangci.yaml` with comprehensive linter settings
+- **yamllint Configuration**: Added `.yamllint.yaml` for YAML validation rules
+- **Pre-commit Setup Guide**: Comprehensive documentation in `docs/PRE_COMMIT_SETUP.md`
+
+### Changed
+- **IAM Policy**: Updated to include `ec2:DescribeAccountAttributes` permission for health checks
+- **Security Group Binding**: Migrated from `vpc.amazonaws.com/pod-eni` annotation to `SecurityGroupPolicy` CRD (breaking change for security group users)
+- **Documentation**: Comprehensive updates to README.md, ARCHITECTURE.md, and Helm chart README with new features
+- **AWS Best Practices**: Enhanced documentation for PascalCase tag naming convention and AWS tagging guidelines
+
+### Fixed
+- Corrected IAM permissions documentation (was missing health check permissions)
+- Fixed security group binding documentation (now uses correct SecurityGroupPolicy CRD format)
+- Improved conditional rendering in Helm templates for optional features
+
+### Security
+- NetworkPolicy enforces ingress/egress rules for controller pods
+- SecurityGroupPolicy provides AWS-native firewall at pod level
+- Tag namespace prefixing prevents cross-tenant tag conflicts
+
 ## [0.1.1] - 2025-12-11
 
 ### Fixed

@@ -29,11 +29,21 @@ type tagDiff struct {
 //
 // The function calculates the minimal set of changes needed to bring the ENI tags
 // in sync with the desired state.
-func parseAndCompareTags(ctx context.Context, pod *corev1.Pod, annotationValue, lastAppliedValue string) (map[string]string, map[string]string, *tagDiff, error) {
+func (r *PodReconciler) parseAndCompareTags(ctx context.Context, pod *corev1.Pod, annotationValue, lastAppliedValue string) (map[string]string, map[string]string, *tagDiff, error) {
 	logger := log.FromContext(ctx)
 
 	// Parse current tags
 	currentTags, err := parseTags(annotationValue)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Apply namespace prefix if configured
+	effectiveNamespace := ""
+	if r.TagNamespace == "enable" {
+		effectiveNamespace = pod.Namespace
+	}
+	currentTags, err = applyNamespace(currentTags, effectiveNamespace)
 	if err != nil {
 		return nil, nil, nil, err
 	}

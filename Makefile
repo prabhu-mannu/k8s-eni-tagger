@@ -36,6 +36,14 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: lint
+lint: ## Run golangci-lint against code.
+	golangci-lint run ./...
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart.
+	helm lint charts/k8s-eni-tagger
+
 .PHONY: test
 test: fmt vet ## Run tests.
 	go test ./... -coverprofile cover.out

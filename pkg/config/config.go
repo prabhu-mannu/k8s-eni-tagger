@@ -27,6 +27,7 @@ type Config struct {
 	AWSRateLimitQPS         float64
 	AWSRateLimitBurst       int
 	PprofBindAddress        string
+	TagNamespace            string
 }
 
 // Load parses flags and environment variables to create a Config
@@ -60,6 +61,9 @@ func Load() (*Config, error) {
 	// Pprof flag
 	flag.StringVar(&cfg.PprofBindAddress, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
 
+	// Tag namespace flag
+	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value (including empty) disables namespacing.")
+
 	flag.Parse()
 
 	if cfg.PrintVersion {
@@ -87,6 +91,12 @@ func Load() (*Config, error) {
 	// Validate annotation key
 	if cfg.AnnotationKey == "" {
 		return nil, fmt.Errorf("annotation-key cannot be empty")
+	}
+
+	// Validate tag namespace
+	// Any value other than "enable" is treated as disabled (no error)
+	if cfg.TagNamespace != "" && cfg.TagNamespace != "enable" {
+		fmt.Fprintf(os.Stderr, "Warning: invalid tag-namespace value '%s', treating as disabled. Use 'enable' to enable pod namespace-based tag namespacing.\n", cfg.TagNamespace)
 	}
 
 	return cfg, nil

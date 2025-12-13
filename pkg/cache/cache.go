@@ -13,9 +13,8 @@ import (
 
 // cacheUpdate represents a pending update to the ConfigMap
 type cacheUpdate struct {
-	op   string // "set" or "delete"
 	ip   string
-	info *aws.ENIInfo // nil for delete
+	info *aws.ENIInfo
 }
 
 // Cache defines the interface for ENI caching
@@ -144,7 +143,7 @@ func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo) {
 	if c.cmPersister != nil {
 		c.ensureWorker()
 		select {
-		case c.updateQueue <- cacheUpdate{op: "set", ip: ip, info: info}:
+		case c.updateQueue <- cacheUpdate{ip: ip, info: info}:
 		default:
 			// queue full, drop update (log warning)
 			log.FromContext(ctx).Info("ConfigMap update queue full, dropping update", "ip", ip)
@@ -159,11 +158,8 @@ func (c *ENICache) Invalidate(ctx context.Context, ip string) {
 	c.mu.Unlock()
 
 	if c.cmPersister != nil {
-		c.ensureWorker()
-		select {
-		case c.updateQueue <- cacheUpdate{op: "delete", ip: ip}:
-		default:
-			log.FromContext(ctx).Info("ConfigMap update queue full, dropping delete", "ip", ip)
+		if err := c.cmPersister.Delete(ctx, ip); err != nil {
+			log.Log.Error(err, "Failed to delete from ConfigMap", "ip", ip)
 		}
 	}
 
@@ -204,26 +200,10 @@ func (c *ENICache) flushBatch(batch []cacheUpdate) {
 	if c.cmPersister == nil || len(batch) == 0 {
 		return
 	}
-	// Group updates by op
-	setMap := make(map[string]*aws.ENIInfo)
-	delList := make([]string, 0)
-	for _, upd := range batch {
-		if upd.op == "set" {
-			setMap[upd.ip] = upd.info
-		} else if upd.op == "delete" {
-			delList = append(delList, upd.ip)
-		}
-	}
 	// Apply sets
-	for ip, info := range setMap {
-		if err := c.cmPersister.Save(context.Background(), ip, info); err != nil {
-			log.Log.Error(err, "Batch persist ENI to ConfigMap", "ip", ip)
-		}
-	}
-	// Apply deletes
-	for _, ip := range delList {
-		if err := c.cmPersister.Delete(context.Background(), ip); err != nil {
-			log.Log.Error(err, "Batch delete ENI from ConfigMap", "ip", ip)
+	for _, upd := range batch {
+		if err := c.cmPersister.Save(context.Background(), upd.ip, upd.info); err != nil {
+			log.Log.Error(err, "Batch persist ENI to ConfigMap", "ip", upd.ip)
 		}
 	}
 }

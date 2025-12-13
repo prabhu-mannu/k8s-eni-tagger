@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"flag"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +58,37 @@ func TestLoad_InvalidSubnet(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Error("Expected error for invalid subnet ID, got nil")
+	}
+}
+
+func TestLoad_InvalidTagNamespace(t *testing.T) {
+	// Reset flags
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	os.Args = []string{"cmd", "--tag-namespace", "invalid"}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	cfg, err := Load()
+	w.Close()
+	os.Stderr = oldStderr
+
+	// Read captured output
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r)
+	warningOutput := buf.String()
+
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.TagNamespace != "invalid" {
+		t.Errorf("Expected TagNamespace 'invalid', got '%s'", cfg.TagNamespace)
+	}
+
+	if !strings.Contains(warningOutput, "Warning: invalid tag-namespace value 'invalid'") {
+		t.Errorf("Expected warning message, got: %s", warningOutput)
 	}
 }

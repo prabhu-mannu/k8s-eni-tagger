@@ -26,13 +26,31 @@ serviceAccount:
   # Whether to automount the service account token
   automountServiceAccountToken: true
 
-# Pod annotations (e.g., for EKS security group binding)
-# Example for security groups:
-# vpc.amazonaws.com/pod-eni: '{"securityGroups": ["sg-xxxxxxxxx"]}'
+# Pod annotations
 podAnnotations: {}
 
 # Pod labels
 podLabels: {}
+
+# SecurityGroupPolicy for controller pods (uses EKS SecurityGroupPolicy CRD)
+# See: https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html
+securityGroupPolicy:
+  # Enable SecurityGroupPolicy CRD for controller pods
+  enabled: false
+  # Security group IDs to attach to controller pods (1-5 groups)
+  # Important: Security groups must allow:
+  # - Inbound from node security group for kubelet probes
+  # - Outbound TCP/UDP 53 to CoreDNS
+  # - Outbound HTTPS (443) to AWS APIs and Kubernetes API
+  groupIds: []
+  # Example:
+  # groupIds:
+  #   - sg-0123456789abcdef0
+
+# NetworkPolicy for controller pod network isolation
+networkPolicy:
+  # Enable NetworkPolicy for controller pods
+  enabled: false
 
 podSecurityContext: {}
   # fsGroup: 2000
@@ -89,8 +107,6 @@ config:
   maxConcurrentReconciles: 1
   # Enable dry-run mode (no AWS changes)
   dryRun: false
-  # Enable leader election for HA deployments
-  enableLeaderElection: false
   # Metrics bind address (format: :port or 0 to disable)
   metricsBindAddress: ":8090"
   # Health probe bind address
@@ -112,6 +128,9 @@ config:
   awsRateLimitBurst: 20
   # Pprof bind address (set to '0' to disable profiling)
   pprofBindAddress: "0"
+  # Tag namespacing control. Set to 'enable' to automatically prefix tags with pod's Kubernetes namespace.
+  # Any other value (including empty) disables namespacing.
+  tagNamespace: ""
 
 # Extra environment variables (Map format for easier --set)
 # Example:
