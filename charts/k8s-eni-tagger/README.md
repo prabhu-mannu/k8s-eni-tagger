@@ -191,7 +191,7 @@ config:
 | `config.awsRateLimitQPS` | AWS API rate limit (QPS) | `10` |
 | `config.awsRateLimitBurst` | AWS API burst limit | `20` |
 | `config.pprofBindAddress` | Pprof profiling endpoint (0=disabled) | `"0"` |
-| `config.tagNamespace` | Tag namespace prefix for multi-tenant scenarios | `""` |
+| `config.tagNamespace` | Tag namespacing control ('enable' = use pod namespace prefix) | `""` |
 
 ### Security
 
@@ -370,13 +370,24 @@ affinity:
           topologyKey: kubernetes.io/hostname
 ```
 
-### Dry-Run Mode for Testing
+### Enable Tag Namespacing
+
+Enable automatic pod namespace-based tag namespacing for multi-tenant environments:
 
 ```yaml
 # values.yaml
 config:
-  dryRun: true
-  watchNamespace: test
+  tagNamespace: enable  # Use pod's Kubernetes namespace as tag prefix
+```
+
+With namespacing enabled, a pod in the `production` namespace with annotation:
+```yaml
+eni-tagger.io/tags: '{"CostCenter":"123","Team":"Platform"}'
+```
+
+Will result in ENI tags:
+```
+production:CostCenter=123, production:Team=Platform
 ```
 
 ## Versioning

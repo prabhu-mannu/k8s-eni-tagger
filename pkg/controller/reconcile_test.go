@@ -106,7 +106,7 @@ func TestReconcile(t *testing.T) {
 					InterfaceType: "interface", // default
 				}, nil)
 				m.On("TagENI", mock.Anything, "eni-123", mock.MatchedBy(func(tags map[string]string) bool {
-					return tags["default:cost-center"] == "123" && tags["default:team"] == "platform"
+					return tags["cost-center"] == "123" && tags["team"] == "platform"
 				})).Return(nil)
 			},
 			verify: func(t *testing.T, k8sClient client.Client, m *MockAWSClient) {
@@ -200,7 +200,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: "default",
 					Annotations: map[string]string{
 						AnnotationKey:            validTags,
-						LastAppliedAnnotationKey: `{"default:cost-center":"123","default:team":"platform"}`,
+						LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
 						LastAppliedHashKey:       "dummy-hash",
 					},
 					Finalizers:        []string{finalizerName},
@@ -219,15 +219,15 @@ func TestReconcile(t *testing.T) {
 				}, nil)
 				// UntagENI should be called with keys from validTags + HashTagKey
 				m.On("UntagENI", mock.Anything, "eni-delete", mock.MatchedBy(func(keys []string) bool {
-					// Check for default:cost-center, default:team, and hash key
+					// Check for cost-center, team, and hash key
 					hasCost := false
 					hasTeam := false
 					hasHash := false
 					for _, k := range keys {
-						if k == "default:cost-center" {
+						if k == "cost-center" {
 							hasCost = true
 						}
-						if k == "default:team" {
+						if k == "team" {
 							hasTeam = true
 						}
 						if k == HashTagKey {
@@ -332,6 +332,10 @@ func TestReconcile(t *testing.T) {
 				Recorder:      recorder,
 				AWSClient:     mockAWS,
 				AnnotationKey: AnnotationKey,
+			}
+			// Enable namespacing for transition test
+			if tt.name == "Transition from non-namespaced to namespaced tags" {
+				r.TagNamespace = "enable"
 			}
 
 			req := reconcile.Request{

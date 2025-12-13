@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -63,7 +62,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.PprofBindAddress, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
 
 	// Tag namespace flag
-	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (max 63 chars, e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). If empty, uses the pod's Kubernetes namespace. Useful for multi-tenant scenarios.")
+	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value (including empty) disables namespacing.")
 
 	flag.Parse()
 
@@ -95,21 +94,9 @@ func Load() (*Config, error) {
 	}
 
 	// Validate tag namespace
-	if cfg.TagNamespace != "" {
-		if strings.Contains(cfg.TagNamespace, ":") {
-			return nil, fmt.Errorf("tag-namespace cannot contain ':' character")
-		}
-		if strings.HasPrefix(cfg.TagNamespace, "aws:") || strings.HasPrefix(cfg.TagNamespace, "kubernetes.io/") {
-			return nil, fmt.Errorf("tag-namespace cannot use reserved prefixes 'aws:' or 'kubernetes.io/'")
-		}
-		// Check for invalid characters: only allow alphanumeric, spaces, + - = . _ /
-		if matched, _ := regexp.MatchString(`^[a-zA-Z0-9 +\-=._/]*$`, cfg.TagNamespace); !matched {
-			return nil, fmt.Errorf("tag-namespace contains invalid characters, only alphanumeric, spaces, and symbols + - = . _ / are allowed")
-		}
-		// Length check: ensure namespace itself is reasonable, < 64 to align with k8s namespace limits
-		if len(cfg.TagNamespace) > 63 {
-			return nil, fmt.Errorf("tag-namespace is too long, maximum 63 characters")
-		}
+	// Any value other than "enable" is treated as disabled (no error)
+	if cfg.TagNamespace != "" && cfg.TagNamespace != "enable" {
+		fmt.Fprintf(os.Stderr, "Warning: invalid tag-namespace value '%s', treating as disabled. Use 'enable' to enable pod namespace-based tag namespacing.\n", cfg.TagNamespace)
 	}
 
 	return cfg, nil

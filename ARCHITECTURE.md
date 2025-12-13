@@ -102,20 +102,26 @@ The deployment includes a checksum annotation for security group IDs. When secur
 
 ### Tag Namespace Prefixing
 
-For enterprise multi-tenant scenarios, the controller supports tag namespace prefixing via the `--tag-namespace` flag. This prevents tag conflicts in shared AWS Organizations:
+For enterprise multi-tenant scenarios, the controller supports automatic tag namespacing using the pod's Kubernetes namespace as a prefix. This prevents tag conflicts in shared environments and provides clear ownership boundaries.
+
+**Configuration:**
+- `--tag-namespace=""` (default): Namespacing disabled
+- `--tag-namespace="enable"`: Namespacing enabled using pod's Kubernetes namespace
+- Any other value: Namespacing disabled (with warning)
 
 **Example:**
 ```yaml
+# Pod in 'production' namespace
 # Annotation: eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
-# With --tag-namespace="acme-corp"
-# Results in: acme-corp:CostCenter=1234, acme-corp:Team=Platform
+# With --tag-namespace="enable"
+# Results in: production:CostCenter=1234, production:Team=Platform
 ```
 
 **Use cases:**
-- Mergers and acquisitions (M&A) scenarios
-- Managed service providers (MSPs) with multiple tenants
-- Multi-organization AWS accounts
-- Clear ownership boundaries for cost allocation
+- Multi-tenant Kubernetes clusters
+- Shared AWS accounts across teams/organizations
+- Cost allocation and resource tracking
+- Preventing tag conflicts in large deployments
 
 ## Data Flow
 
