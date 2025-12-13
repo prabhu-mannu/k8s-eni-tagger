@@ -36,3 +36,5 @@ Thumbs.db
 bin/
 manager
 k8s-eni-tagger
+!charts/**
+.DS_Store

@@ -14,11 +14,6 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  {{- if .Values.config.enableCacheConfigMap }}
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  {{- end }}
 {{- if eq (include "k8s-eni-tagger.leaderElectionEnabled" .) "true" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -50,6 +45,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "k8s-eni-tagger.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "k8s-eni-tagger.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.config.enableCacheConfigMap }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "k8s-eni-tagger.fullname" . }}-cache
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-eni-tagger.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "k8s-eni-tagger.fullname" . }}-cache
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-eni-tagger.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "k8s-eni-tagger.fullname" . }}-cache
 subjects:
   - kind: ServiceAccount
     name: {{ include "k8s-eni-tagger.serviceAccountName" . }}

@@ -19,11 +19,17 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// Check per-pod rate limit (if enabled)
 	if r.PodRateLimitQPS > 0 {
+		now := time.Now()
 		limiterInterface, _ := r.PodRateLimiters.LoadOrStore(
 			req.String(),
-			rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
+			&RateLimiterEntry{
+				Limiter:    rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
+				LastAccess: now,
+			},
 		)
-		limiter := limiterInterface.(*rate.Limiter)
+		entry := limiterInterface.(*RateLimiterEntry)
+		entry.LastAccess = now // Update last access time
+		limiter := entry.Limiter.(*rate.Limiter)
 
 		if !limiter.Allow() {
 			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second

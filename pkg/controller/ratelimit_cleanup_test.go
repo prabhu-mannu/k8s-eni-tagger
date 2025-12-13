@@ -75,17 +75,24 @@ func TestCleanupStaleLimiters(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPod).Build()
 
 	r := &PodReconciler{
-		Client:            k8sClient,
-		Scheme:            scheme,
-		PodRateLimiters:   &sync.Map{},
-		PodRateLimitBurst: 1,
+		Client:                      k8sClient,
+		Scheme:                      scheme,
+		PodRateLimiters:             &sync.Map{},
+		PodRateLimitBurst:           1,
+		RateLimiterCleanupThreshold: 30 * time.Minute, // Set cleanup threshold
 	}
 
 	ctx := context.Background()
 
 	// Add some limiters (one existing, one stale)
-	r.PodRateLimiters.Store("default/existing-pod", "limiter1")
-	r.PodRateLimiters.Store("default/stale-pod", "limiter2")
+	r.PodRateLimiters.Store("default/existing-pod", &RateLimiterEntry{
+		Limiter:    nil, // Not needed for this test
+		LastAccess: time.Now(),
+	})
+	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
+		Limiter:    nil,                        // Not needed for this test
+		LastAccess: time.Now().Add(-time.Hour), // Old enough to be cleaned up
+	})
 
 	// Run cleanup
 	r.cleanupStaleLimiters(ctx)

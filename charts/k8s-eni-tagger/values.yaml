@@ -144,9 +144,6 @@ config:
 # own ConfigMap via `envFrom` or `env` values.
 configMap:
   create: true
-  # Optional name to override the generated name. If empty, the generated name
-  # {{ include "k8s-eni-tagger.fullname" }}-config is used.
-  name: "" 
 
 # Extra environment variables (Map format for easier --set)
 # Example:

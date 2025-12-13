@@ -53,11 +53,7 @@ false
 
 {{/* ConfigMap name for env injection */}}
 {{- define "k8s-eni-tagger.envConfigMapName" -}}
-{{- if .Values.configMap.name }}
-{{- .Values.configMap.name }}
-{{- else }}
 {{- printf "%s-config" (include "k8s-eni-tagger.fullname" .) }}
-{{- end }}
 {{- end }}
 
 {{/* Build ConfigMap data from config values and extra env map. */}}

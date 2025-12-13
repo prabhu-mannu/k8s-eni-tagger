@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -35,35 +33,32 @@ func (r *PodReconciler) StartRateLimiterCleanup(ctx context.Context, interval ti
 	}()
 }
 
-// cleanupStaleLimiters removes rate limiters for pods that no longer exist
+// cleanupStaleLimiters removes rate limiters that haven't been accessed for the cleanup threshold
 func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 	logger := log.FromContext(ctx).WithName("rate-limiter-cleanup")
 
-	// Collect all current pod keys
-	existingPods := make(map[string]bool)
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList); err != nil {
-		logger.Error(err, "Failed to list pods for cleanup")
+	if r.RateLimiterCleanupThreshold <= 0 {
+		logger.V(1).Info("Rate limiter cleanup disabled (threshold not set)")
 		return
 	}
 
-	for _, pod := range podList.Items {
-		key := client.ObjectKeyFromObject(&pod).String()
-		existingPods[key] = true
-	}
-
-	// Remove limiters for non-existent pods
+	now := time.Now()
+	cutoff := now.Add(-r.RateLimiterCleanupThreshold)
 	removed := 0
+
 	r.PodRateLimiters.Range(func(key, value interface{}) bool {
 		podKey := key.(string)
-		if !existingPods[podKey] {
+		entry := value.(*RateLimiterEntry)
+
+		if entry.LastAccess.Before(cutoff) {
 			r.PodRateLimiters.Delete(podKey)
 			removed++
+			logger.V(1).Info("Removed stale rate limiter", "pod", podKey, "lastAccess", entry.LastAccess)
 		}
 		return true
 	})
 
 	if removed > 0 {
-		logger.Info("Cleaned up stale rate limiters", "removed", removed, "remaining", len(existingPods))
+		logger.Info("Cleaned up stale rate limiters", "removed", removed, "threshold", r.RateLimiterCleanupThreshold)
 	}
 }
