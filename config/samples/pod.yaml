@@ -4,9 +4,10 @@ metadata:
   name: sample-pod
   annotations:
     # Supports both formats:
-    # 1. Comma-separated: CostCenter=1234,Team=Platform,Env=Dev
-    # 2. JSON: '{"CostCenter":"1234","Team":"Platform","Env":"Dev"}'
-    eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Env=Dev"
+    # 1. Comma-separated (recommended): CostCenter=1234,Team=Platform,Environment=Production
+    # 2. JSON: '{"CostCenter":"1234","Team":"Platform","Environment":"Production"}'
+    # Use PascalCase for consistency with AWS conventions
+    eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Environment=Development"
 spec:
   containers:
   - name: nginx

@@ -93,6 +93,84 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--aws-rate-limit-qps`        | `10`                 | AWS API rate limit (requests per second).                                    |
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
+| `--tag-namespace`             | `""` (none)           | Optional namespace prefix for tags (e.g., `acme-corp:CostCenter`).           |
+
+---
+
+## AWS Tagging Best PracticesBest Practices
+
+### Tag Naming Conventions
+
+Follow AWS best practices for consistent, maintainable tagging:
+
+#### **Use PascalCase** (AWS Standard)
+```yaml
+# ✅ Recommended - matches AWS console and documentation
+eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Environment=Production"
+
+# ❌ Avoid mixing conventions
+eni-tagger.io/tags: "cost_center=1234,TEAM=Platform,environment=Production"
+```
+
+**Why PascalCase?**
+- Standard in AWS Console and CloudFormation
+- Consistent with AWS-generated tags (`Name`, `Owner`, `Environment`)
+- Easier to read and maintain across teams
+
+#### **Tag Constraints (AWS Limits)**
+
+| Constraint | Limit | Notes |
+|------------|-------|-------|
+| **Max tags per ENI** | 50 | Controller enforces this limit |
+| **Key max length** | 127 characters | UTF-8 Unicode supported |
+| **Value max length** | 255 characters | Can be empty |
+| **Allowed characters** | `a-z, A-Z, 0-9, spaces, + - = . _ : / @` | Cross-service compatible |
+| **Reserved prefixes** | `aws:`, `kubernetes.io/cluster/` | Cannot be used in tag keys |
+| **Case sensitivity** | Yes | `CostCenter` ≠ `costcenter` |
+
+#### **Security Guidelines**
+
+> [!CAUTION]
+> **Tags are not encrypted!** Do not store sensitive data:
+> - ❌ Passwords, API keys, secrets
+> - ❌ Social Security Numbers, credit card numbers
+> - ❌ Personal identifiable information (PII)
+> - ✅ Cost center codes, team names, environment labels
+
+#### **Enterprise Multi-Tenant Scenarios**
+
+Use `--tag-namespace` to prevent conflicts in shared AWS Organizations:
+
+```yaml
+# Without namespace
+eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
+# Results in: CostCenter=1234, Team=Platform
+
+# With namespace (set via Helm: config.tagNamespace="acme-corp")
+eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
+# Results in: acme-corp:CostCenter=1234, acme-corp:Team=Platform
+```
+
+**Benefits:**
+- Prevents conflicts during mergers/acquisitions
+- Clear ownership boundaries in multi-tenant environments
+- Easier cost reporting per organization/department
+- Supports managed service providers (MSPs)
+
+#### **Recommended Tag Categories**
+
+```yaml
+# Technical Tags (for automation)
+eni-tagger.io/tags: "Environment=Production,Version=v1.2.3,Cluster=eks-prod-us-west-2"
+
+# Business Tags (for cost allocation)
+eni-tagger.io/tags: "CostCenter=1234,Project=Migration2024,BusinessUnit=Engineering"
+
+# Security Tags (for compliance)
+eni-tagger.io/tags: "Compliance=SOC2,DataClassification=Internal,Owner=platform-team@example.com"
+```
+
+For complete AWS tagging guidelines, see [AWS_TAGGING_BEST_PRACTICES.md](docs/AWS_TAGGING_BEST_PRACTICES.md).
 
 ---
 
@@ -123,6 +201,67 @@ graph TD
 
 ---
 
+## Security Features
+
+### Network Policy
+
+The controller supports Kubernetes `NetworkPolicy` for pod-level network isolation. This restricts network traffic to only what's necessary for the controller to function.
+
+**Enable NetworkPolicy via Helm:**
+
+```yaml
+networkPolicy:
+  enabled: true
+```
+
+The NetworkPolicy allows:
+- **Ingress**: Prometheus metrics (8090), health probes (8081)
+- **Egress**: DNS (53), Kubernetes API (443/6443), AWS APIs (443)
+
+**Requirements:**
+- Network policy provider (Calico, Cilium, Weave, etc.) must be installed in your cluster
+
+### Security Groups for Pods
+
+For EKS clusters, the controller supports attaching AWS security groups directly to controller pods using the `SecurityGroupPolicy` CRD.
+
+**Enable SecurityGroupPolicy via Helm:**
+
+```yaml
+securityGroupPolicy:
+  enabled: true
+  groupIds:
+    - sg-0123456789abcdef0  # Controller security group
+    - sg-abcdef0123456789   # Additional security group (optional)
+```
+
+**Prerequisites:**
+1. EKS cluster with VPC CNI configured for security groups for Pods:
+   ```bash
+   kubectl set env daemonset aws-node -n kube-system ENABLE_POD_ENI=true
+   kubectl set env daemonset aws-node -n kube-system POD_SECURITY_GROUP_ENFORCING_MODE=standard
+   ```
+2. Cluster IAM role has `AmazonEKSVPCResourceController` policy attached
+3. Nitro-based EC2 instance types (required for trunk ENIs)
+
+**Security Group Requirements:**
+- Allow **inbound** from node security group for kubelet probes (port 8081)
+- Allow **outbound TCP/UDP port 53** to CoreDNS security group
+- Allow **outbound HTTPS (443)** to AWS APIs and Kubernetes API server
+- Allow **inbound** for Prometheus scraping if metrics collection is enabled (port 8090)
+
+**Pod Restart on Security Group Changes:**
+The deployment includes a checksum annotation that automatically triggers pod restarts when security group IDs change:
+```yaml
+checksum/security-groups: {{ .Values.securityGroupPolicy.groupIds | toJson | sha256sum }}
+```
+
+**Important:** The annotation `vpc.amazonaws.com/pod-eni` is NOT used for security group binding. Use the `SecurityGroupPolicy` CRD instead.
+
+For more details, see [AWS Security Groups for Pods](https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html).
+
+---
+
 ## Health Checks & Metrics
 
 - **Readiness Probe**: Verifies AWS API connectivity.
@@ -143,15 +282,68 @@ graph TD
 
 > [!IMPORTANT]
 > **Q:** What IAM permissions are required?
-> **A:** `ec2:DescribeNetworkInterfaces`, `ec2:CreateTags`, `ec2:DeleteTags` on all ENIs.
+> **A:** `ec2:DescribeNetworkInterfaces`, `ec2:CreateTags`, `ec2:DeleteTags`, and `ec2:DescribeAccountAttributes` (for health checks). See `iam-policy.json` for the complete policy.
+
+---
+
+## IAM Policy
+
+The controller requires specific IAM permissions to manage ENI tags. A complete IAM policy is provided in `iam-policy.json`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ENITaggingPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "HealthCheckPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAccountAttributes"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+**Setup with IRSA (Recommended):**
+
+```bash
+# Create IAM policy
+aws iam create-policy \
+  --policy-name k8s-eni-tagger-policy \
+  --policy-document file://iam-policy.json
+
+# Create IAM role with IRSA
+eksctl create iamserviceaccount \
+  --name k8s-eni-tagger \
+  --namespace kube-system \
+  --cluster my-cluster \
+  --attach-policy-arn arn:aws:iam::123456789012:policy/k8s-eni-tagger-policy \
+  --approve
+```
 
 ---
 
 ## Resources
+- [IAM Policy Template](iam-policy.json)
 - [Helm Chart Documentation](charts/k8s-eni-tagger/README.md)
 - [Architecture Details](ARCHITECTURE.md)
+- [AWS Tagging Best Practices](docs/AWS_TAGGING_BEST_PRACTICES.md)
+- [Annotation Format Research](docs/ANNOTATION_FORMAT_RESEARCH.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing Guide](CONTRIBUTING.md)
+- [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
 
 ---
 

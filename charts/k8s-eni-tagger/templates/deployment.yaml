@@ -12,6 +12,10 @@ spec:
   template:
     metadata:
       annotations:
+        {{- if .Values.securityGroupPolicy.enabled }}
+        # Hash of security group IDs to trigger pod restart on changes
+        checksum/security-groups: {{ .Values.securityGroupPolicy.groupIds | toJson | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -68,6 +72,9 @@ spec:
             - --aws-rate-limit-qps={{ .Values.config.awsRateLimitQPS }}
             - --aws-rate-limit-burst={{ .Values.config.awsRateLimitBurst }}
             - --pprof-bind-address={{ .Values.config.pprofBindAddress }}
+            {{- if .Values.config.tagNamespace }}
+            - --tag-namespace={{ .Values.config.tagNamespace }}
+            {{- end }}
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
