@@ -15,7 +15,7 @@ You will need:
 1.  Clone the repository:
 
     ```bash
-    git clone https://github.com/prabhu/k8s-eni-tagger.git
+    git clone https://github.com/prabhu-mannu/k8s-eni-tagger.git
     cd k8s-eni-tagger
     ```
 
@@ -29,6 +29,16 @@ You will need:
     ```bash
     make build
     ```
+
+## Git Author Identity
+
+This repository uses a `.mailmap` file to normalize historical author identities.
+To ensure new commits use the expected author name, set your local git identity:
+
+```bash
+git config user.name "prabhu-mannu"
+git config user.email "<your-email>"
+```
 
 ## Pull Requests
 
