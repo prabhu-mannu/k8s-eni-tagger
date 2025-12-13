@@ -17,6 +17,7 @@ import (
 type RateLimiterEntry struct {
 	Limiter    *rate.Limiter // The actual rate limiter
 	LastAccess time.Time
+	mu         sync.Mutex
 }
 
 // PodReconciler reconciles Pod objects and manages ENI tags

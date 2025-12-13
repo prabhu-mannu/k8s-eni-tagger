@@ -85,6 +85,9 @@ func newRateLimiter(qps float64, burst int) *rateLimiter {
 }
 
 func (r *rateLimiter) Wait(ctx context.Context) error {
+	if r.refillRate <= 0 {
+		return errors.New("rate limiter refill rate must be positive")
+	}
 	for {
 		// Acquire lock and refill tokens
 		r.mu.Lock()

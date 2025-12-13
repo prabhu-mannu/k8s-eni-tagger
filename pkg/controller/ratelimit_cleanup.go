@@ -60,10 +60,14 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 			return true // continue processing other entries
 		}
 
-		if entry.LastAccess.Before(cutoff) {
+		entry.mu.Lock()
+		lastAccess := entry.LastAccess
+		entry.mu.Unlock()
+
+		if lastAccess.Before(cutoff) {
 			r.PodRateLimiters.Delete(podKey)
 			removed++
-			logger.V(1).Info("Removed stale rate limiter", "pod", podKey, "lastAccess", entry.LastAccess)
+			logger.V(1).Info("Removed stale rate limiter", "pod", podKey, "lastAccess", lastAccess)
 		}
 		return true
 	})

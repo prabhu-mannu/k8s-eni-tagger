@@ -38,7 +38,9 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			}
 			r.PodRateLimiters.Store(req.String(), entry)
 		}
+		entry.mu.Lock()
 		entry.LastAccess = now // Update last access time
+		entry.mu.Unlock()
 
 		if !entry.Limiter.Allow() {
 			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
