@@ -40,7 +40,6 @@ type Client interface {
 	GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error)
 	TagENI(ctx context.Context, eniID string, tags map[string]string) error
 	UntagENI(ctx context.Context, eniID string, tagKeys []string) error
-	// GetEC2Client returns the underlying EC2 client for sharing with other components
 	GetEC2Client() *ec2.Client
 }
 
@@ -75,19 +74,22 @@ type rateLimiter struct {
 	mu         sync.Mutex
 }
 
-func newRateLimiter(qps float64, burst int) *rateLimiter {
+func newRateLimiter(qps float64, burst int) (*rateLimiter, error) {
+	if qps <= 0 {
+		return nil, fmt.Errorf("rate limiter QPS must be positive: %f", qps)
+	}
+	if burst < 1 {
+		return nil, fmt.Errorf("rate limiter burst must be at least 1: %d", burst)
+	}
 	return &rateLimiter{
 		tokens:     float64(burst),
 		maxTokens:  float64(burst),
 		refillRate: qps,
 		lastRefill: time.Now(),
-	}
+	}, nil
 }
 
 func (r *rateLimiter) Wait(ctx context.Context) error {
-	if r.refillRate <= 0 {
-		return errors.New("rate limiter refill rate must be positive")
-	}
 	for {
 		// Acquire lock and refill tokens
 		r.mu.Lock()
@@ -136,9 +138,14 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 	// Set custom User-Agent
 	cfg.AppID = "k8s-eni-tagger"
 
+	rateLimiter, err := newRateLimiter(rlConfig.QPS, rlConfig.Burst)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
+	}
+
 	return &defaultClient{
 		ec2Client:   ec2.NewFromConfig(cfg),
-		rateLimiter: newRateLimiter(rlConfig.QPS, rlConfig.Burst),
+		rateLimiter: rateLimiter,
 	}, nil
 }
 

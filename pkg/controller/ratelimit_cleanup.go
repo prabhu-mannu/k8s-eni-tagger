@@ -50,13 +50,17 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 	r.PodRateLimiters.Range(func(key, value interface{}) bool {
 		podKey, ok := key.(string)
 		if !ok {
-			logger.Error(nil, "Invalid key type in rate limiter map", "key", key, "type", fmt.Sprintf("%T", key))
+			logger.Error(nil, "Invalid key type in rate limiter map, removing entry", "key", key, "type", fmt.Sprintf("%T", key))
+			r.PodRateLimiters.Delete(key)
+			removed++
 			return true // continue processing other entries
 		}
 
 		entry, ok := value.(*RateLimiterEntry)
 		if !ok {
-			logger.Error(nil, "Invalid value type in rate limiter map", "key", podKey, "valueType", fmt.Sprintf("%T", value))
+			logger.Error(nil, "Invalid value type in rate limiter map, removing entry", "key", podKey, "valueType", fmt.Sprintf("%T", value))
+			r.PodRateLimiters.Delete(podKey)
+			removed++
 			return true // continue processing other entries
 		}
 

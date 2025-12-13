@@ -196,9 +196,9 @@ func TestCleanupStaleLimiters_InvalidKeyType(t *testing.T) {
 	_, exists := r.PodRateLimiters.Load("default/valid-pod")
 	assert.False(t, exists, "valid stale entry should be removed")
 
-	// Invalid entry should remain (since we can't process it)
+	// Invalid entry should be removed (corrupted entries are cleaned up)
 	_, exists = r.PodRateLimiters.Load(123)
-	assert.True(t, exists, "invalid key type entry should remain")
+	assert.False(t, exists, "invalid key type entry should be removed")
 }
 
 func TestCleanupStaleLimiters_EmptyMap(t *testing.T) {
@@ -240,7 +240,7 @@ func TestCleanupStaleLimiters_InvalidValueType(t *testing.T) {
 	_, exists := r.PodRateLimiters.Load("default/valid-pod")
 	assert.False(t, exists, "valid stale entry should be removed")
 
-	// Invalid entry should remain (since we can't process it)
+	// Invalid entry should be removed (corrupted entries are cleaned up)
 	_, exists = r.PodRateLimiters.Load("default/invalid-value")
-	assert.True(t, exists, "invalid value type entry should remain")
+	assert.False(t, exists, "invalid value type entry should be removed")
 }

@@ -82,7 +82,15 @@ func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENII
 		return fmt.Errorf("failed to marshal ENI info: %w", err)
 	}
 
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	var lastErr error
+	retryCount := 0
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		retryCount++
+		if retryCount > 1 {
+			logger.V(1).Info("Retrying ConfigMap save", "ip", ip, "attempt", retryCount, "lastError", lastErr)
+		}
+
 		cm := &corev1.ConfigMap{}
 		err := p.client.Get(ctx, client.ObjectKey{
 			Namespace: p.namespace,
@@ -102,11 +110,13 @@ func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENII
 					},
 				}
 				if err := p.client.Create(ctx, cm); err != nil {
+					lastErr = err
 					return fmt.Errorf("failed to create ConfigMap: %w", err)
 				}
 				logger.Info("Created ENI cache ConfigMap", "ip", ip)
 				return nil
 			}
+			lastErr = err
 			return err
 		}
 
@@ -116,8 +126,18 @@ func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENII
 		}
 		cm.Data[ip] = string(data)
 
-		return p.client.Update(ctx, cm)
+		if err := p.client.Update(ctx, cm); err != nil {
+			lastErr = err
+			return err
+		}
+		return nil
 	})
+
+	if retryCount > 1 {
+		logger.Info("ConfigMap save completed after retries", "ip", ip, "attempts", retryCount)
+	}
+
+	return err
 }
 
 // Delete removes a single ENI entry from the ConfigMap

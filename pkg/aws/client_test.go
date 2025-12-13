@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // mockEC2Client is a mock implementation of EC2API
@@ -129,9 +130,12 @@ func TestGetENIInfoByIP(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
 			info, err := c.GetENIInfoByIP(ctx, tt.ip)
@@ -193,12 +197,15 @@ func TestTagENI(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
-			err := c.TagENI(ctx, tt.eniID, tt.tags)
+			err = c.TagENI(ctx, tt.eniID, tt.tags)
 
 			if tt.expectedError != "" {
 				assert.ErrorContains(t, err, tt.expectedError)
@@ -245,12 +252,15 @@ func TestUntagENI(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
-			err := c.UntagENI(ctx, tt.eniID, tt.keys)
+			err = c.UntagENI(ctx, tt.eniID, tt.keys)
 
 			if tt.expectedError != "" {
 				assert.ErrorContains(t, err, tt.expectedError)
@@ -270,11 +280,12 @@ func TestRateLimitConfig(t *testing.T) {
 
 func TestRateLimiter(t *testing.T) {
 	// Create a limiter with small capacity to test waiting
-	rl := newRateLimiter(10, 1) // 10 QPS, burst 1
+	rl, err := newRateLimiter(10, 1) // 10 QPS, burst 1
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	// 1. First token should be available immediately
-	err := rl.Wait(ctx)
+	err = rl.Wait(ctx)
 	assert.NoError(t, err)
 
 	// 2. Second token needs waiting
@@ -292,9 +303,11 @@ func TestRateLimiter(t *testing.T) {
 func TestConstructors(t *testing.T) {
 	// Test GetEC2Client with mock (should return nil as it's not *ec2.Client)
 	mockClient := new(mockEC2Client)
+	rl, err := newRateLimiter(10, 20)
+	require.NoError(t, err)
 	c := &defaultClient{
 		ec2Client:   mockClient,
-		rateLimiter: newRateLimiter(10, 20),
+		rateLimiter: rl,
 	}
 	assert.Nil(t, c.GetEC2Client())
 
