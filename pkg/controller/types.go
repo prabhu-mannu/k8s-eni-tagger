@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -15,9 +16,42 @@ import (
 
 // RateLimiterEntry holds a rate limiter with its last access timestamp
 type RateLimiterEntry struct {
-	Limiter    *rate.Limiter // The actual rate limiter
-	LastAccess time.Time
+	limiter    *rate.Limiter // unexport to prevent nil assignment
+	lastAccess time.Time     // unexport to enforce mutex usage
 	mu         sync.Mutex
+}
+
+// NewRateLimiterEntry creates a new RateLimiterEntry with validation
+func NewRateLimiterEntry(qps float64, burst int) (*RateLimiterEntry, error) {
+	if qps <= 0 {
+		return nil, fmt.Errorf("qps must be positive")
+	}
+	if burst < 1 {
+		return nil, fmt.Errorf("burst must be at least 1")
+	}
+	return &RateLimiterEntry{
+		limiter:    rate.NewLimiter(rate.Limit(qps), burst),
+		lastAccess: time.Now(),
+	}, nil
+}
+
+// UpdateLastAccess safely updates the last access timestamp
+func (e *RateLimiterEntry) UpdateLastAccess(t time.Time) {
+	e.mu.Lock()
+	e.lastAccess = t
+	e.mu.Unlock()
+}
+
+// GetLastAccess safely retrieves the last access timestamp
+func (e *RateLimiterEntry) GetLastAccess() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lastAccess
+}
+
+// Allow checks if the rate limiter allows the request
+func (e *RateLimiterEntry) Allow() bool {
+	return e.limiter.Allow()
 }
 
 // PodReconciler reconciles Pod objects and manages ENI tags

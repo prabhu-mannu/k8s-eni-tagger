@@ -86,12 +86,12 @@ func TestCleanupStaleLimiters(t *testing.T) {
 
 	// Add some limiters (one existing, one stale)
 	r.PodRateLimiters.Store("default/existing-pod", &RateLimiterEntry{
-		Limiter:    nil, // Not needed for this test
-		LastAccess: time.Now(),
+		limiter:    nil, // Not needed for this test
+		lastAccess: time.Now(),
 	})
 	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		Limiter:    nil,                        // Not needed for this test
-		LastAccess: time.Now().Add(-time.Hour), // Old enough to be cleaned up
+		limiter:    nil,                        // Not needed for this test
+		lastAccess: time.Now().Add(-time.Hour), // Old enough to be cleaned up
 	})
 
 	// Run cleanup
@@ -127,13 +127,13 @@ func TestCleanupStaleLimiters_ThresholdBehavior(t *testing.T) {
 	now := time.Now()
 	// Add limiters with different ages
 	r.PodRateLimiters.Store("default/recent-pod", &RateLimiterEntry{
-		LastAccess: now.Add(-10 * time.Minute), // Within threshold
+		lastAccess: now.Add(-10 * time.Minute), // Within threshold
 	})
 	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		LastAccess: now.Add(-45 * time.Minute), // Beyond threshold
+		lastAccess: now.Add(-45 * time.Minute), // Beyond threshold
 	})
 	r.PodRateLimiters.Store("default/just-inside-threshold", &RateLimiterEntry{
-		LastAccess: now.Add(-29 * time.Minute), // Just inside threshold
+		lastAccess: now.Add(-29 * time.Minute), // Just inside threshold
 	})
 
 	// Run cleanup
@@ -160,7 +160,7 @@ func TestCleanupStaleLimiters_Disabled(t *testing.T) {
 
 	// Add a stale limiter
 	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		LastAccess: time.Now().Add(-time.Hour),
+		lastAccess: time.Now().Add(-time.Hour),
 	})
 
 	// Run cleanup
@@ -181,10 +181,10 @@ func TestCleanupStaleLimiters_InvalidKeyType(t *testing.T) {
 
 	// Add entries with invalid key types (this shouldn't happen in practice, but test safety)
 	r.PodRateLimiters.Store(123, &RateLimiterEntry{ // int key instead of string
-		LastAccess: time.Now().Add(-time.Hour),
+		lastAccess: time.Now().Add(-time.Hour),
 	})
 	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
-		LastAccess: time.Now().Add(-time.Hour),
+		lastAccess: time.Now().Add(-time.Hour),
 	})
 
 	// Run cleanup - should not panic
@@ -228,7 +228,7 @@ func TestCleanupStaleLimiters_InvalidValueType(t *testing.T) {
 	// Add entries with invalid value types
 	r.PodRateLimiters.Store("default/invalid-value", "not-a-rate-limiter-entry") // string instead of *RateLimiterEntry
 	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
-		LastAccess: time.Now().Add(-time.Hour),
+		lastAccess: time.Now().Add(-time.Hour),
 	})
 
 	// Run cleanup - should not panic

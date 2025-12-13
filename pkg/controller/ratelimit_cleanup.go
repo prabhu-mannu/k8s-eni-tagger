@@ -65,9 +65,7 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 			return true // continue processing other entries
 		}
 
-		entry.mu.Lock()
-		lastAccess := entry.LastAccess
-		entry.mu.Unlock()
+		lastAccess := entry.GetLastAccess()
 
 		if lastAccess.Before(cutoff) {
 			r.PodRateLimiters.Delete(podKey)

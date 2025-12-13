@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -23,26 +22,29 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		now := time.Now()
 		limiterInterface, _ := r.PodRateLimiters.LoadOrStore(
 			req.String(),
-			&RateLimiterEntry{
-				Limiter:    rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
-				LastAccess: now,
-			},
+			func() *RateLimiterEntry {
+				entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
+				if err != nil {
+					logger.Error(err, "Failed to create rate limiter entry")
+					return nil
+				}
+				return entry
+			}(),
 		)
 		entry, ok := limiterInterface.(*RateLimiterEntry)
-		if !ok {
+		if !ok || entry == nil {
 			// This should not happen, but handle gracefully to avoid panic
 			logger.Error(nil, "Invalid rate limiter entry type, recreating", "key", req.String(), "type", fmt.Sprintf("%T", limiterInterface))
-			entry = &RateLimiterEntry{
-				Limiter:    rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
-				LastAccess: now,
+			entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
+			if err != nil {
+				logger.Error(err, "Failed to recreate rate limiter entry")
+				return ctrl.Result{}, err
 			}
 			r.PodRateLimiters.Store(req.String(), entry)
 		}
-		entry.mu.Lock()
-		entry.LastAccess = now // Update last access time
-		entry.mu.Unlock()
+		entry.UpdateLastAccess(now)
 
-		if !entry.Limiter.Allow() {
+		if !entry.Allow() {
 			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
 			logger.V(1).Info("Rate limited, skipping reconciliation", LogKeyRequeueAfter, requeueAfter)
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
