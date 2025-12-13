@@ -118,15 +118,17 @@ func main() {
 	}
 	setupLog.Info("AWS client initialized with rate limiting", "qps", cfg.AWSRateLimitQPS, "burst", cfg.AWSRateLimitBurst)
 
-	// Add health check using the shared EC2 client
+	// Add AWS connectivity check for startup validation only
+	// This runs once at startup to verify AWS permissions
+	// Moving from readyz to healthz prevents continuous AWS API calls from readiness probes
 	ec2HealthClient := &health.EC2HealthClient{EC2: awsClient.GetEC2Client()}
 	if err := ec2HealthClient.Validate(); err != nil {
 		setupLog.Error(err, "unable to initialize EC2 health client")
 		os.Exit(1)
 	}
 	awsChecker := health.NewAWSChecker(ec2HealthClient)
-	if err := mgr.AddReadyzCheck("aws-connectivity", awsChecker.Check); err != nil {
-		setupLog.Error(err, "unable to add readiness check")
+	if err := mgr.AddHealthzCheck("aws", awsChecker.Check); err != nil {
+		setupLog.Error(err, "unable to add AWS health check")
 		os.Exit(1)
 	}
 
@@ -173,6 +175,8 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
+	// Readiness check: simple ping, no AWS API calls
+	// This ensures the controller manager is ready to process events
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)

@@ -3,8 +3,10 @@ kind: Pod
 metadata:
   name: sample-pod
   annotations:
-    # This annotation triggers the controller - must be valid JSON
-    eni-tagger.io/tags: '{"CostCenter":"1234","Team":"Platform","Env":"Dev"}'
+    # Supports both formats:
+    # 1. Comma-separated: CostCenter=1234,Team=Platform,Env=Dev
+    # 2. JSON: '{"CostCenter":"1234","Team":"Platform","Env":"Dev"}'
+    eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Env=Dev"
 spec:
   containers:
   - name: nginx
