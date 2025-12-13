@@ -113,14 +113,14 @@ func TestForeignTagsPreservation(t *testing.T) {
 		},
 	}, nil).Times(1) // Called once for add
 
-	// Expect TagENI to be called ONLY with "my-tag" and "hash"
+	// Expect TagENI to be called ONLY with "default:my-tag" and "hash"
 	// It should NOT try to re-apply "foreign-tag" or remove it.
 	mockAWS.On("TagENI", mock.Anything, "eni-1", mock.MatchedBy(func(tags map[string]string) bool {
-		// Only check if my-tag is present.
-		// Detailed check: should strictly contain my-tag and hash.
+		// Only check if default:my-tag is present.
+		// Detailed check: should strictly contain default:my-tag and hash.
 		// If it contained "foreign-tag", that would be weird (we don't read and re-apply).
 		_, hasForeign := tags["foreign-tag"]
-		return tags["my-tag"] == "my-value" && !hasForeign
+		return tags["default:my-tag"] == "my-value" && !hasForeign
 	})).Return(nil)
 
 	r := &PodReconciler{
@@ -139,7 +139,7 @@ func TestForeignTagsPreservation(t *testing.T) {
 
 	// Step 2: Simulate Deletion (Remove Tags)
 	// Update pod to have last-applied-tags matching what we added
-	tagsWithHash := map[string]string{"my-tag": "my-value"}
+	tagsWithHash := map[string]string{"default:my-tag": "my-value"}
 	hash := computeHash(tagsWithHash)
 	tagsJson, _ := json.Marshal(tagsWithHash)
 
@@ -153,13 +153,13 @@ func TestForeignTagsPreservation(t *testing.T) {
 	mockAWS.On("GetENIInfoByIP", mock.Anything, "10.0.0.1").Return(&aws.ENIInfo{
 		ID: "eni-1",
 		Tags: map[string]string{
-			"foreign-tag": "foreign-value",
-			"my-tag":      "my-value",
-			HashTagKey:    hash,
+			"foreign-tag":    "foreign-value",
+			"default:my-tag": "my-value",
+			HashTagKey:       hash,
 		},
 	}, nil)
 
-	// Expect UntagENI to be called ONLY with "my-tag" and "hash"
+	// Expect UntagENI to be called ONLY with "default:my-tag" and "hash"
 	// It must NOT contain "foreign-tag"
 	mockAWS.On("UntagENI", mock.Anything, "eni-1", mock.MatchedBy(func(keys []string) bool {
 		for _, k := range keys {
@@ -167,8 +167,8 @@ func TestForeignTagsPreservation(t *testing.T) {
 				return false
 			}
 		}
-		// Should have my-tag and hash
-		return len(keys) == 2 // my-tag + hash
+		// Should have default:my-tag and hash
+		return len(keys) == 2 // default:my-tag + hash
 	})).Return(nil)
 
 	// Run Reconcile (Deletion)

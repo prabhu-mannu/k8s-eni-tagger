@@ -106,7 +106,7 @@ func TestReconcile(t *testing.T) {
 					InterfaceType: "interface", // default
 				}, nil)
 				m.On("TagENI", mock.Anything, "eni-123", mock.MatchedBy(func(tags map[string]string) bool {
-					return tags["cost-center"] == "123" && tags["team"] == "platform"
+					return tags["default:cost-center"] == "123" && tags["default:team"] == "platform"
 				})).Return(nil)
 			},
 			verify: func(t *testing.T, k8sClient client.Client, m *MockAWSClient) {
@@ -200,7 +200,7 @@ func TestReconcile(t *testing.T) {
 					Namespace: "default",
 					Annotations: map[string]string{
 						AnnotationKey:            validTags,
-						LastAppliedAnnotationKey: validTags,
+						LastAppliedAnnotationKey: `{"default:cost-center":"123","default:team":"platform"}`,
 						LastAppliedHashKey:       "dummy-hash",
 					},
 					Finalizers:        []string{finalizerName},
@@ -219,15 +219,15 @@ func TestReconcile(t *testing.T) {
 				}, nil)
 				// UntagENI should be called with keys from validTags + HashTagKey
 				m.On("UntagENI", mock.Anything, "eni-delete", mock.MatchedBy(func(keys []string) bool {
-					// Check for cost-center, team, and hash key
+					// Check for default:cost-center, default:team, and hash key
 					hasCost := false
 					hasTeam := false
 					hasHash := false
 					for _, k := range keys {
-						if k == "cost-center" {
+						if k == "default:cost-center" {
 							hasCost = true
 						}
-						if k == "team" {
+						if k == "default:team" {
 							hasTeam = true
 						}
 						if k == HashTagKey {
