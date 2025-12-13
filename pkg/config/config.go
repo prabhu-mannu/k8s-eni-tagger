@@ -63,7 +63,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.PprofBindAddress, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
 
 	// Tag namespace flag
-	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). If empty, uses the pod's Kubernetes namespace. Useful for multi-tenant scenarios.")
+	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (max 63 chars, e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). If empty, uses the pod's Kubernetes namespace. Useful for multi-tenant scenarios.")
 
 	flag.Parse()
 
@@ -106,9 +106,9 @@ func Load() (*Config, error) {
 		if matched, _ := regexp.MatchString(`^[a-zA-Z0-9 +\-=._/]*$`, cfg.TagNamespace); !matched {
 			return nil, fmt.Errorf("tag-namespace contains invalid characters, only alphanumeric, spaces, and symbols + - = . _ / are allowed")
 		}
-		// Length check: ensure namespace itself is reasonable, < 100 to leave room for keys
-		if len(cfg.TagNamespace) > 100 {
-			return nil, fmt.Errorf("tag-namespace is too long, maximum 100 characters")
+		// Length check: ensure namespace itself is reasonable, < 64 to align with k8s namespace limits
+		if len(cfg.TagNamespace) > 63 {
+			return nil, fmt.Errorf("tag-namespace is too long, maximum 63 characters")
 		}
 	}
 
