@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -31,8 +33,12 @@ func TestLoad_EnvVarSubnets(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 
-	os.Setenv("ENI_TAGGER_SUBNET_IDS", "subnet-123,subnet-456")
-	defer os.Unsetenv("ENI_TAGGER_SUBNET_IDS")
+	err := os.Setenv("ENI_TAGGER_SUBNET_IDS", "subnet-123,subnet-456")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("ENI_TAGGER_SUBNET_IDS")
+		require.NoError(t, err)
+	}()
 
 	cfg, err := Load()
 	if err != nil {
@@ -52,10 +58,14 @@ func TestLoad_InvalidSubnet(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 
-	os.Setenv("ENI_TAGGER_SUBNET_IDS", "invalid-id")
-	defer os.Unsetenv("ENI_TAGGER_SUBNET_IDS")
+	err := os.Setenv("ENI_TAGGER_SUBNET_IDS", "invalid-id")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("ENI_TAGGER_SUBNET_IDS")
+		require.NoError(t, err)
+	}()
 
-	_, err := Load()
+	_, err = Load()
 	if err == nil {
 		t.Error("Expected error for invalid subnet ID, got nil")
 	}
@@ -72,12 +82,15 @@ func TestLoad_InvalidTagNamespace(t *testing.T) {
 	os.Stderr = w
 
 	cfg, err := Load()
-	w.Close()
+	require.NoError(t, err)
+	err = w.Close()
+	require.NoError(t, err)
 	os.Stderr = oldStderr
 
 	// Read captured output
 	buf := new(bytes.Buffer)
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
 	warningOutput := buf.String()
 
 	if err != nil {
@@ -98,14 +111,24 @@ func TestLoad_EnvFallbacks(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 
-	os.Setenv("ENI_TAGGER_DRY_RUN", "true")
-	os.Setenv("ENI_TAGGER_METRICS_BIND_ADDRESS", ":9010")
-	os.Setenv("ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING", "true")
-	os.Setenv("ENI_TAGGER_AWS_RATE_LIMIT_QPS", "20")
-	defer os.Unsetenv("ENI_TAGGER_DRY_RUN")
-	defer os.Unsetenv("ENI_TAGGER_METRICS_BIND_ADDRESS")
-	defer os.Unsetenv("ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING")
-	defer os.Unsetenv("ENI_TAGGER_AWS_RATE_LIMIT_QPS")
+	err := os.Setenv("ENI_TAGGER_DRY_RUN", "true")
+	require.NoError(t, err)
+	err = os.Setenv("ENI_TAGGER_METRICS_BIND_ADDRESS", ":9010")
+	require.NoError(t, err)
+	err = os.Setenv("ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING", "true")
+	require.NoError(t, err)
+	err = os.Setenv("ENI_TAGGER_AWS_RATE_LIMIT_QPS", "20")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("ENI_TAGGER_DRY_RUN")
+		require.NoError(t, err)
+		err = os.Unsetenv("ENI_TAGGER_METRICS_BIND_ADDRESS")
+		require.NoError(t, err)
+		err = os.Unsetenv("ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING")
+		require.NoError(t, err)
+		err = os.Unsetenv("ENI_TAGGER_AWS_RATE_LIMIT_QPS")
+		require.NoError(t, err)
+	}()
 
 	cfg, err := Load()
 	if err != nil {
@@ -131,8 +154,12 @@ func TestLoad_CLI_Precedence_OverEnv(t *testing.T) {
 	// Pass CLI to enable dry-run (true)
 	os.Args = []string{"cmd", "--dry-run"}
 
-	os.Setenv("ENI_TAGGER_DRY_RUN", "false")
-	defer os.Unsetenv("ENI_TAGGER_DRY_RUN")
+	err := os.Setenv("ENI_TAGGER_DRY_RUN", "false")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("ENI_TAGGER_DRY_RUN")
+		require.NoError(t, err)
+	}()
 
 	cfg, err := Load()
 	if err != nil {

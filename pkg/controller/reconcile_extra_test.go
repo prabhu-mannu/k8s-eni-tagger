@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -89,7 +90,8 @@ func TestForeignTagsPreservation(t *testing.T) {
 	// during tagging or untagging operations.
 
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -137,7 +139,7 @@ func TestForeignTagsPreservation(t *testing.T) {
 	}
 
 	// Run Reconcile
-	_, err := r.Reconcile(context.Background(), reconcile.Request{
+	_, err = r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: client.ObjectKeyFromObject(pod),
 	})
 	assert.NoError(t, err)

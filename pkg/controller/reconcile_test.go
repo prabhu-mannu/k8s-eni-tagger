@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -50,7 +51,8 @@ func (m *MockAWSClient) GetEC2Client() *ec2.Client {
 
 func TestReconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	// Valid annotation string
 	validTags := `{"cost-center":"123","team":"platform"}`
@@ -148,7 +150,8 @@ func TestReconcile(t *testing.T) {
 			verify: func(t *testing.T, k8sClient client.Client, m *MockAWSClient) {
 				// Check finalizer added
 				pod := &corev1.Pod{}
-				k8sClient.Get(context.Background(), client.ObjectKey{Name: "pod-success", Namespace: "default"}, pod)
+				err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "pod-success", Namespace: "default"}, pod)
+				require.NoError(t, err)
 				assert.Contains(t, pod.Finalizers, finalizerName)
 			},
 		},

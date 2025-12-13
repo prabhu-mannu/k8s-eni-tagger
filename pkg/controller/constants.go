@@ -38,6 +38,24 @@ const (
 	MaxTagsPerENI = 50
 )
 
+// Logging key constants for consistent structured logging
+const (
+	LogKeyPod           = "pod"
+	LogKeyPodIP         = "podIP"
+	LogKeyPodName       = "podName"
+	LogKeyPodNamespace  = "podNamespace"
+	LogKeyENIID         = "eniID"
+	LogKeyENISubnet     = "eniSubnet"
+	LogKeyTags          = "tags"
+	LogKeyTagCount      = "tagCount"
+	LogKeyAnnotation    = "annotation"
+	LogKeyAnnotationKey = "annotationKey"
+	LogKeyRequeueAfter  = "requeueAfter"
+	LogKeyError         = "error"
+	LogKeyDuration      = "duration"
+	LogKeyOperation     = "operation"
+)
+
 var (
 	// reservedPrefixes contains AWS reserved tag key prefixes that cannot be used.
 	reservedPrefixes = []string{"aws:", "kubernetes.io/cluster/"}
@@ -48,5 +66,6 @@ var (
 
 	// tagValuePattern is the regex pattern for valid AWS tag values.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
+	// Empty values are also allowed
 	tagValuePattern = regexp.MustCompile(`^[a-zA-Z0-9 ._\-:/=+@]{0,255}$`)
 )

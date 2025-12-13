@@ -43,7 +43,7 @@ func TestValidateENI(t *testing.T) {
 			},
 			eniInfo:     &aws.ENIInfo{ID: "eni-1", SubnetID: "subnet-2"},
 			expectError: true,
-			errorMsg:    "ENI subnet subnet-2 is not in allowed list",
+			errorMsg:    "ENI eni-1 subnet subnet-2 is not in allowed subnet list",
 		},
 		{
 			name:        "Shared ENI Blocked",

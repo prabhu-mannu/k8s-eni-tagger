@@ -1,6 +1,6 @@
 module k8s-eni-tagger
 
-go 1.23
+go 1.25
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.40.0
@@ -9,6 +9,7 @@ require (
 	github.com/aws/smithy-go v1.23.2
 	github.com/prometheus/client_golang v1.16.0
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/time v0.3.0
 	k8s.io/api v0.28.4
 	k8s.io/apimachinery v0.28.4
 	k8s.io/client-go v0.28.4
@@ -69,7 +70,6 @@ require (
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
-	golang.org/x/time v0.3.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
