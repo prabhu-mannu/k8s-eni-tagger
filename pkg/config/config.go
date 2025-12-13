@@ -98,6 +98,23 @@ func Load() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "Warning: invalid tag-namespace value '%s', treating as disabled. Use 'enable' to enable pod namespace-based tag namespacing.\n", cfg.TagNamespace)
 	}
 
+	// Validate rate limiting configuration
+	if cfg.PodRateLimitQPS < 0 {
+		return nil, fmt.Errorf("pod-rate-limit-qps cannot be negative: %f", cfg.PodRateLimitQPS)
+	}
+	if cfg.PodRateLimitQPS > 0 && cfg.PodRateLimitBurst < 1 {
+		return nil, fmt.Errorf("pod-rate-limit-burst must be at least 1 when rate limiting enabled (got %d)", cfg.PodRateLimitBurst)
+	}
+	if cfg.RateLimiterCleanupInterval < 0 {
+		return nil, fmt.Errorf("rate-limiter-cleanup-interval cannot be negative: %v", cfg.RateLimiterCleanupInterval)
+	}
+	if cfg.AWSRateLimitQPS <= 0 {
+		return nil, fmt.Errorf("aws-rate-limit-qps must be positive: %f", cfg.AWSRateLimitQPS)
+	}
+	if cfg.AWSRateLimitBurst < 1 {
+		return nil, fmt.Errorf("aws-rate-limit-burst must be at least 1: %d", cfg.AWSRateLimitBurst)
+	}
+
 	return cfg, nil
 }
 

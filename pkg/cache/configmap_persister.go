@@ -52,13 +52,22 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	}
 
 	result := make(map[string]*aws.ENIInfo)
+	skippedEntries := []string{}
 	for ip, data := range cm.Data {
 		var info aws.ENIInfo
 		if err := json.Unmarshal([]byte(data), &info); err != nil {
-			logger.Info("Failed to unmarshal ENI info, skipping entry", "ip", ip, "error", err.Error())
+			logger.Error(err, "Failed to unmarshal ENI info, skipping entry", "ip", ip, "data", data)
+			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
 		result[ip] = &info
+	}
+
+	if len(skippedEntries) > 0 {
+		logger.Error(nil, "ConfigMap cache corruption detected",
+			"skippedEntries", len(skippedEntries),
+			"totalEntries", len(cm.Data),
+			"ips", skippedEntries)
 	}
 
 	return result, nil
