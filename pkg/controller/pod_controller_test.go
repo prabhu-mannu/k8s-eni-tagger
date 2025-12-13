@@ -19,8 +19,8 @@ func TestValidateTags(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "valid tags with capital letters",
-			annotation:  `{"CostCenter":"1234","Team":"Platform","Environment":"Production"}`,
+			name:        "valid tags with spaces and special chars",
+			annotation:  `{"Cost Center":"US East 1","Team/Env":"Platform.Dev","key_with=sign":"value@domain"}`,
 			expectError: false,
 		},
 		{

@@ -1,0 +1,10 @@
+{{- if .Values.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-eni-tagger.envConfigMapName" . }}
+  labels:
+    {{- include "k8s-eni-tagger.labels" . | nindent 4 }}
+data:
+{{- include "k8s-eni-tagger.envBuildConfigMapData" . | trim | nindent 2 }}
+{{- end }}

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestCreatePredicate(t *testing.T) {
-	r := &PodReconciler{AnnotationKey: AnnotationKey}
+	r := &PodReconciler{AnnotationKey: AnnotationKey, PodRateLimiters: &sync.Map{}, PodRateLimitQPS: 0.1, PodRateLimitBurst: 1}
 	p := r.createPredicate()
 
 	t.Run("Create", func(t *testing.T) {

@@ -67,6 +67,8 @@ func NewENICache(awsClient aws.Client) *ENICache {
 
 // SetBatchConfig updates batching parameters. Call before enabling ConfigMap persistence.
 func (c *ENICache) SetBatchConfig(interval time.Duration, size int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if interval > 0 {
 		c.batchInterval = interval
 	}
@@ -173,8 +175,14 @@ func (c *ENICache) ensureWorker() {
 
 // configMapWorker batches and rate-limits ConfigMap updates
 func (c *ENICache) configMapWorker() {
-	batch := make([]cacheUpdate, 0, c.batchSize)
-	ticker := time.NewTicker(c.batchInterval)
+	// Copy batching config under lock to avoid race conditions
+	c.mu.RLock()
+	batchSize := c.batchSize
+	batchInterval := c.batchInterval
+	c.mu.RUnlock()
+
+	batch := make([]cacheUpdate, 0, batchSize)
+	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 	for {
 		select {

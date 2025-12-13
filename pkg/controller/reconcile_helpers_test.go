@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -114,7 +115,10 @@ func TestParseAndCompareTags_Namespacing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &PodReconciler{
-				TagNamespace: tt.tagNamespace,
+				TagNamespace:      tt.tagNamespace,
+				PodRateLimiters:   &sync.Map{},
+				PodRateLimitQPS:   0.1,
+				PodRateLimitBurst: 1,
 			}
 
 			currentTags, lastAppliedTags, diff, err := r.parseAndCompareTags(

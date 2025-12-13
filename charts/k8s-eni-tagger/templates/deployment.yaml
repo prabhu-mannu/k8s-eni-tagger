@@ -42,47 +42,27 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --annotation-key={{ .Values.config.annotationKey }}
-            - --max-concurrent-reconciles={{ .Values.config.maxConcurrentReconciles }}
-            - --metrics-bind-address={{ .Values.config.metricsBindAddress }}
-            - --health-probe-bind-address={{ .Values.config.healthProbeBindAddress }}
-            {{- if .Values.config.watchNamespace }}
-            - --watch-namespace={{ .Values.config.watchNamespace }}
-            {{- end }}
-            {{- if .Values.config.dryRun }}
-            - --dry-run
-            {{- end }}
             {{- if eq (include "k8s-eni-tagger.leaderElectionEnabled" .) "true" }}
             - --leader-elect
-            {{- end }}
-            {{- if .Values.config.subnetIDs }}
-            - --subnet-ids={{ .Values.config.subnetIDs }}
-            {{- end }}
-            {{- if .Values.config.allowSharedENITagging }}
-            - --allow-shared-eni-tagging
-            {{- end }}
-            {{- if not .Values.config.enableENICache }}
-            - --enable-eni-cache=false
-            {{- end }}
-            {{- if .Values.config.enableCacheConfigMap }}
-            - --enable-cache-configmap
-            {{- end }}
-            - --cache-batch-interval={{ .Values.config.cacheBatchInterval }}
-            - --cache-batch-size={{ .Values.config.cacheBatchSize }}
-            - --aws-rate-limit-qps={{ .Values.config.awsRateLimitQPS }}
-            - --aws-rate-limit-burst={{ .Values.config.awsRateLimitBurst }}
-            - --pprof-bind-address={{ .Values.config.pprofBindAddress }}
-            {{- if .Values.config.tagNamespace }}
-            - --tag-namespace={{ .Values.config.tagNamespace }}
             {{- end }}
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+          {{- if .Values.configMap.create }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "k8s-eni-tagger.envConfigMapName" . }}
+                optional: true
+            {{- with .Values.envFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
           {{- with .Values.envFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           ports:
             - name: metrics

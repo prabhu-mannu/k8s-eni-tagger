@@ -6,6 +6,8 @@ import (
 	"net/http"
 	_ "net/http/pprof" // Register pprof handlers
 	"os"
+	"strings"
+	"sync"
 
 	"k8s-eni-tagger/pkg/aws"
 	enicache "k8s-eni-tagger/pkg/cache"
@@ -35,6 +37,26 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+}
+
+// getControllerNamespace returns the namespace the controller is running in.
+// Priority:
+// 1. POD_NAMESPACE environment variable (when set via downward API)
+// 2. Service account namespace file (in-cluster default)
+// 3. Fallback: "default"
+func getControllerNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+
+	const namespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+	if data, err := os.ReadFile(namespacePath); err == nil {
+		if ns := strings.TrimSpace(string(data)); ns != "" {
+			return ns
+		}
+	}
+
+	return "default"
 }
 
 func startPprof(addr string) {
@@ -141,36 +163,42 @@ func main() {
 
 		// Add ConfigMap persistence if enabled
 		if cfg.EnableCacheConfigMap {
-			// Get namespace from environment or use default
-			namespace := os.Getenv("POD_NAMESPACE")
-			if namespace == "" {
-				namespace = "kube-system"
-			}
+			namespace := getControllerNamespace()
 			cmPersister := enicache.NewConfigMapPersister(mgr.GetClient(), namespace)
 			eniCache.WithConfigMapPersister(cmPersister)
 			if err := eniCache.LoadFromConfigMap(ctx); err != nil {
 				setupLog.Error(err, "Failed to load cache from ConfigMap, starting fresh")
 			}
+			setupLog.Info("ENI cache ConfigMap persistence enabled", "namespace", namespace)
 		}
 
 		setupLog.Info("ENI caching enabled (lifecycle-based)", "configMapPersistence", cfg.EnableCacheConfigMap)
 	}
 
-	if err = (&controller.PodReconciler{
-		Client:                mgr.GetClient(),
-		Scheme:                mgr.GetScheme(),
-		AWSClient:             awsClient,
-		ENICache:              eniCache,
-		Recorder:              mgr.GetEventRecorderFor("k8s-eni-tagger"),
-		AnnotationKey:         cfg.AnnotationKey,
-		DryRun:                cfg.DryRun,
-		SubnetIDs:             cfg.SubnetIDs,
-		AllowSharedENITagging: cfg.AllowSharedENITagging,
-		TagNamespace:          cfg.TagNamespace,
-	}).SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {
+	podReconciler := &controller.PodReconciler{
+		Client:                      mgr.GetClient(),
+		Scheme:                      mgr.GetScheme(),
+		AWSClient:                   awsClient,
+		ENICache:                    eniCache,
+		Recorder:                    mgr.GetEventRecorderFor("k8s-eni-tagger"),
+		AnnotationKey:               cfg.AnnotationKey,
+		DryRun:                      cfg.DryRun,
+		SubnetIDs:                   cfg.SubnetIDs,
+		AllowSharedENITagging:       cfg.AllowSharedENITagging,
+		TagNamespace:                cfg.TagNamespace,
+		PodRateLimiters:             &sync.Map{},
+		PodRateLimitQPS:             cfg.PodRateLimitQPS,
+		PodRateLimitBurst:           cfg.PodRateLimitBurst,
+		RateLimiterCleanupThreshold: cfg.RateLimiterCleanupInterval * 5,
+	}
+
+	if err = podReconciler.SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
+
+	// Start rate limiter cleanup goroutine
+	podReconciler.StartRateLimiterCleanup(ctx, cfg.RateLimiterCleanupInterval)
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

@@ -180,8 +180,8 @@ config:
 | `config.watchNamespace` | Namespace to watch (empty = all) | `""` |
 | `config.maxConcurrentReconciles` | Concurrent reconciliation workers | `1` |
 | `config.dryRun` | Enable dry-run mode (no AWS changes) | `false` |
-| `config.metricsBindAddress` | Metrics endpoint bind address | `:8090` |
-| `config.healthProbeBindAddress` | Health probe bind address | `:8081` |
+| `config.metricsBindAddress` | Metrics endpoint bind port/address (bare port auto-prefixed with 0.0.0.0:) | `8090` |
+| `config.healthProbeBindAddress` | Health probe bind port/address (bare port auto-prefixed with 0.0.0.0:) | `8081` |
 | `config.subnetIDs` | Comma-separated allowed subnet IDs | `""` |
 | `config.allowSharedENITagging` | Allow tagging shared ENIs (WARNING) | `false` |
 | `config.enableENICache` | Enable in-memory ENI cache | `true` |
@@ -192,6 +192,9 @@ config:
 | `config.awsRateLimitBurst` | AWS API burst limit | `20` |
 | `config.pprofBindAddress` | Pprof profiling endpoint (0=disabled) | `"0"` |
 | `config.tagNamespace` | Tag namespacing control ('enable' = use pod namespace prefix) | `""` |
+| `config.podRateLimitQPS` | Per-pod reconciliation rate limit (QPS) | `0.1` |
+| `config.podRateLimitBurst` | Per-pod rate limit burst size | `1` |
+| `config.rateLimiterCleanupInterval` | Cleanup interval for stale per-pod rate limiters | `1m` |
 
 ### Security
 
@@ -228,7 +231,13 @@ resources:
     memory: 64Mi
 ```
 
-### Environment Variables
+### Environment Variables and ConfigMap
+
+This chart now generates a ConfigMap (by default) containing controller configuration
+values as environment variables using the `ENI_TAGGER_*` prefix. These values come from
+`.Values.config` and `.Values.env` and are injected into the controller via `envFrom`.
+
+You can provide additional environment variables using `env` and `envFrom` as usual:
 
 ```yaml
 env:
@@ -240,6 +249,13 @@ envFrom:
       name: my-config
   - secretRef:
       name: my-secret
+```
+
+To disable the generated configmap and keep manual control, set:
+
+```yaml
+configMap:
+  create: false
 ```
 
 ### Volume Mounts

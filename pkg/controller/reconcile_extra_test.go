@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"k8s-eni-tagger/pkg/aws"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -88,7 +90,8 @@ func TestForeignTagsPreservation(t *testing.T) {
 	// during tagging or untagging operations.
 
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -124,16 +127,19 @@ func TestForeignTagsPreservation(t *testing.T) {
 	})).Return(nil)
 
 	r := &PodReconciler{
-		Client:        fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
-		Scheme:        scheme,
-		Recorder:      record.NewFakeRecorder(10),
-		AWSClient:     mockAWS,
-		AnnotationKey: AnnotationKey,
-		TagNamespace:  "enable",
+		Client:            fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		TagNamespace:      "enable",
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   0.1,
+		PodRateLimitBurst: 1,
 	}
 
 	// Run Reconcile
-	_, err := r.Reconcile(context.Background(), reconcile.Request{
+	_, err = r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: client.ObjectKeyFromObject(pod),
 	})
 	assert.NoError(t, err)
@@ -173,6 +179,8 @@ func TestForeignTagsPreservation(t *testing.T) {
 	})).Return(nil)
 
 	// Run Reconcile (Deletion)
+	// Reset the rate limiter for the deletion test since we're reconciling the same pod again
+	r.PodRateLimiters = &sync.Map{}
 	r.Client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	_, err = r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: client.ObjectKeyFromObject(pod),

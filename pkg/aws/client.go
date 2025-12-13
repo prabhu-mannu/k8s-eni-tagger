@@ -40,7 +40,6 @@ type Client interface {
 	GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error)
 	TagENI(ctx context.Context, eniID string, tags map[string]string) error
 	UntagENI(ctx context.Context, eniID string, tagKeys []string) error
-	// GetEC2Client returns the underlying EC2 client for sharing with other components
 	GetEC2Client() *ec2.Client
 }
 
@@ -75,42 +74,52 @@ type rateLimiter struct {
 	mu         sync.Mutex
 }
 
-func newRateLimiter(qps float64, burst int) *rateLimiter {
+func newRateLimiter(qps float64, burst int) (*rateLimiter, error) {
+	if qps <= 0 {
+		return nil, fmt.Errorf("rate limiter QPS must be positive: %f", qps)
+	}
+	if burst < 1 {
+		return nil, fmt.Errorf("rate limiter burst must be at least 1: %d", burst)
+	}
 	return &rateLimiter{
 		tokens:     float64(burst),
 		maxTokens:  float64(burst),
 		refillRate: qps,
 		lastRefill: time.Now(),
-	}
+	}, nil
 }
 
 func (r *rateLimiter) Wait(ctx context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Refill tokens based on elapsed time
-	now := time.Now()
-	elapsed := now.Sub(r.lastRefill).Seconds()
-	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
-	r.lastRefill = now
-
-	if r.tokens >= 1 {
-		r.tokens--
-		return nil
-	}
-
-	// Calculate wait time for next token
-	waitTime := time.Duration((1-r.tokens)/r.refillRate*1000) * time.Millisecond
-	r.mu.Unlock()
-
-	select {
-	case <-ctx.Done():
+	for {
+		// Acquire lock and refill tokens
 		r.mu.Lock()
-		return ctx.Err()
-	case <-time.After(waitTime):
-		r.mu.Lock()
-		r.tokens = 0 // Reset after wait
-		return nil
+		now := time.Now()
+		elapsed := now.Sub(r.lastRefill).Seconds()
+		r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
+		r.lastRefill = now
+
+		if r.tokens >= 1 {
+			r.tokens--
+			r.mu.Unlock()
+			return nil
+		}
+
+		// Calculate wait time for next token and release lock while waiting
+		// Ensure tokens is non-negative for accurate wait calculation
+		tokensNeeded := 1.0 - max(0, r.tokens)
+		waitTime := time.Duration(tokensNeeded/r.refillRate*1000) * time.Millisecond
+		r.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			// Context canceled while waiting
+			return ctx.Err()
+		case <-time.After(waitTime):
+			// Loop back to refill tokens based on elapsed time during wait
+			// This ensures we account for all elapsed time, even if other goroutines
+			// consumed tokens while we were waiting
+			continue
+		}
 	}
 }
 
@@ -129,13 +138,17 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 	// Set custom User-Agent
 	cfg.AppID = "k8s-eni-tagger"
 
+	rateLimiter, err := newRateLimiter(rlConfig.QPS, rlConfig.Burst)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
+	}
+
 	return &defaultClient{
 		ec2Client:   ec2.NewFromConfig(cfg),
-		rateLimiter: newRateLimiter(rlConfig.QPS, rlConfig.Burst),
+		rateLimiter: rateLimiter,
 	}, nil
 }
 
-// GetEC2Client returns the underlying EC2 client for sharing with other components
 // GetEC2Client returns the underlying EC2 client for sharing with other components
 // Note: This now returns an interface, callers may need to type assert if they need the specific struct
 // but for general usage the interface should suffice if extended.
@@ -195,8 +208,8 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	}
 
 	info := &ENIInfo{
-		ID:            *eni.NetworkInterfaceId,
-		SubnetID:      *eni.SubnetId,
+		ID:            aws.ToString(eni.NetworkInterfaceId),
+		SubnetID:      aws.ToString(eni.SubnetId),
 		InterfaceType: string(eni.InterfaceType),
 		Description:   aws.ToString(eni.Description),
 		Tags:          tags,

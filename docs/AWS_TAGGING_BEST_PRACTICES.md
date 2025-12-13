@@ -187,7 +187,9 @@ example-inc:cost-allocation:business-unit=engineering
 
 **Consideration for k8s-eni-tagger:**
 - Could add optional namespace prefix configuration
-- Example: `--tag-namespace=acme-corp` → all tags become `acme-corp:CostCenter=1234`
+ - Use `--tag-namespace=enable` to enable automatic namespacing using the Pod's Kubernetes namespace. Example:
+     `--tag-namespace=enable` → a `production`-pod's tags become `production:CostCenter=1234`.
+     Note: Setting an arbitrary value (e.g., `acme-corp`) is not supported and will be treated as disabled.
 - Would help enterprises with complex organizational structures
 
 ---
@@ -411,7 +413,7 @@ var (
 | Gap | Severity | Recommendation |
 |-----|----------|----------------|
 | **IMDS compatibility** | Low | Add optional `--imds-compatible-tags` flag to restrict spaces and `/` |
-| **Namespace support** | Low | Add optional `--tag-namespace` prefix for enterprise scenarios |
+| **Namespace support** | Low | Extend `--tag-namespace` flag to support arbitrary prefixes (currently only 'enable' for pod namespaces) |
 | **Tag key conventions** | Informational | Document recommended PascalCase convention in README |
 | **Value validation strictness** | None | Current implementation allows empty values (AWS compliant) |
 
@@ -421,10 +423,12 @@ var (
 
 **Purpose:** Support users who enable tags in EC2 instance metadata
 
-**Implementation:**
+**Current Implementation:** Only `--tag-namespace=enable` is supported for pod namespace-based namespacing.
+
+**Proposed Enhancement:**
 ```go
-// main.go
-tagNamespace := flag.String("tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp')")
+// main.go (proposed future enhancement)
+tagNamespace := flag.String("tag-namespace", "", "Optional namespace prefix for all tags. Use 'enable' for pod namespace-based namespacing, or set a custom prefix (e.g., 'acme-corp')")
 imdsCompatible := flag.Bool("imds-compatible-tags", false, "Enforce IMDS-compatible tag restrictions (no spaces or /)")
 ```
 
@@ -445,7 +449,7 @@ var (
 
 **Implementation:**
 ```go
-// Example: --tag-namespace=acme
+// Example: --tag-namespace=enable  (uses the pod's kube namespace as prefix)
 // Input:  CostCenter=1234
 // Output: acme:CostCenter=1234
 

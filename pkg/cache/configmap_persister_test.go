@@ -8,6 +8,7 @@ import (
 	"k8s-eni-tagger/pkg/aws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,7 +18,8 @@ import (
 
 func TestNewConfigMapPersister(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	p := NewConfigMapPersister(k8sClient, "default")
@@ -26,7 +28,8 @@ func TestNewConfigMapPersister(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	info1 := &aws.ENIInfo{ID: "eni-1", Tags: map[string]string{"foo": "bar"}}
 	data1, _ := json.Marshal(info1)
@@ -98,7 +101,8 @@ func TestLoad(t *testing.T) {
 
 func TestSave(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	info := &aws.ENIInfo{ID: "eni-1", Tags: map[string]string{"foo": "bar"}}
 
@@ -138,7 +142,8 @@ func TestSave(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	t.Run("ConfigMap Not Found", func(t *testing.T) {
 		k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()

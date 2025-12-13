@@ -1,0 +1,18 @@
+{{- if .Values.securityGroupPolicy.enabled }}
+apiVersion: vpcresources.k8s.aws/v1beta1
+kind: SecurityGroupPolicy
+metadata:
+  name: {{ include "k8s-eni-tagger.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-eni-tagger.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "k8s-eni-tagger.selectorLabels" . | nindent 6 }}
+  securityGroups:
+    groupIds:
+      {{- range .Values.securityGroupPolicy.groupIds }}
+      - {{ . }}
+      {{- end }}
+{{- end }}
