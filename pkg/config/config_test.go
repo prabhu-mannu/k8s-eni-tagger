@@ -2,17 +2,17 @@ package config
 
 import (
 	"bytes"
-	"flag"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLoad_Defaults(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	os.Args = []string{"cmd"}
 
 	cfg, err := Load()
@@ -30,7 +30,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_EnvVarSubnets(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	os.Args = []string{"cmd"}
 
 	err := os.Setenv("ENI_TAGGER_SUBNET_IDS", "subnet-123,subnet-456")
@@ -55,7 +55,7 @@ func TestLoad_EnvVarSubnets(t *testing.T) {
 
 func TestLoad_InvalidSubnet(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	os.Args = []string{"cmd"}
 
 	err := os.Setenv("ENI_TAGGER_SUBNET_IDS", "invalid-id")
@@ -73,7 +73,7 @@ func TestLoad_InvalidSubnet(t *testing.T) {
 
 func TestLoad_InvalidTagNamespace(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	os.Args = []string{"cmd", "--tag-namespace", "invalid"}
 
 	// Capture stderr
@@ -108,7 +108,7 @@ func TestLoad_InvalidTagNamespace(t *testing.T) {
 
 func TestLoad_EnvFallbacks(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	os.Args = []string{"cmd"}
 
 	err := os.Setenv("ENI_TAGGER_DRY_RUN", "true")
@@ -150,7 +150,7 @@ func TestLoad_EnvFallbacks(t *testing.T) {
 
 func TestLoad_CLI_Precedence_OverEnv(t *testing.T) {
 	// Reset flags
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	// Pass CLI to enable dry-run (true)
 	os.Args = []string{"cmd", "--dry-run"}
 

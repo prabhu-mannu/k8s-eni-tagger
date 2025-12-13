@@ -11,6 +11,35 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// retryUntagENI retries untag operations with exponential backoff and context cancellation support
+func (r *PodReconciler) retryUntagENI(ctx context.Context, eniID string, tags []string) error {
+	var uerr error
+	backoff := 100 * time.Millisecond
+	for i := 0; i < 3; i++ {
+		if err := r.AWSClient.UntagENI(ctx, eniID, tags); err != nil {
+			uerr = err
+			if i == 2 {
+				break
+			}
+			select {
+			case <-time.After(backoff):
+				// continue to next retry
+			case <-ctx.Done():
+				uerr = ctx.Err()
+				break
+			}
+			backoff *= 2
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		uerr = nil
+		break
+	}
+	return uerr
+}
+
 // getENIInfo retrieves ENI information for a given IP address.
 // Uses cache if available, otherwise queries AWS API.
 func (r *PodReconciler) getENIInfo(ctx context.Context, ip string) (*aws.ENIInfo, error) {
@@ -113,25 +142,8 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 		}
 
 		if len(diff.toRemove) > 0 {
-			// Retry transient failures for untag operations with exponential backoff
-			var uerr error
-			backoff := 100 * time.Millisecond
-			for i := 0; i < 3; i++ {
-				if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
-					uerr = err
-					// If last attempt, exit loop and surface the error
-					if i == 2 {
-						break
-					}
-					time.Sleep(backoff)
-					backoff *= 2
-					continue
-				}
-				uerr = nil
-				break
-			}
-			if uerr != nil {
-				return fmt.Errorf("failed to untag ENI %s after 3 attempts (removed %d tags): %w", eniInfo.ID, len(diff.toRemove), uerr)
+			if err := r.retryUntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
+				return fmt.Errorf("failed to untag ENI %s after 3 attempts (removed %d tags): %w", eniInfo.ID, len(diff.toRemove), err)
 			}
 		}
 

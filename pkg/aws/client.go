@@ -17,15 +17,6 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// min returns the lesser of two float64 values.
-// It's intentionally local to avoid importing math just for a tiny helper.
-func min(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // EC2API defines the interface for EC2 operations used by this package
 // This allows for mocking in tests
 type EC2API interface {
