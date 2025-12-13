@@ -23,6 +23,16 @@ func TestValidateTags(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "valid comma-separated format",
+			annotation:  `CostCenter=1234,Team=Platform,Env=Dev`,
+			expectError: false,
+		},
+		{
+			name:        "valid comma-separated with spaces",
+			annotation:  `CostCenter = 1234, Team = Platform, Env = Dev`,
+			expectError: false,
+		},
+		{
 			name:        "empty tags",
 			annotation:  `{}`,
 			expectError: true,
@@ -33,8 +43,13 @@ func TestValidateTags(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:        "comma-separated format (invalid - should be JSON)",
-			annotation:  `CostCenter=1234,Team=Platform,Env=Dev`,
+			name:        "comma-separated format with missing value",
+			annotation:  `CostCenter=1234,Team=,Env=Dev`,
+			expectError: false, // Empty values are allowed
+		},
+		{
+			name:        "comma-separated format with invalid syntax",
+			annotation:  `CostCenter:1234,Team=Platform`,
 			expectError: true,
 		},
 		{
