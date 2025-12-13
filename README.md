@@ -97,6 +97,50 @@ The controller will apply these tags to the Pod's ENI in AWS.
 
 ---
 
+## Enabling Namespace Tagging on Existing Deployments
+
+⚠️ **Important**: When enabling `--tag-namespace` on a running deployment, existing ENIs will be automatically updated to use namespaced tags.
+
+### Transition Behavior
+
+**Before enabling namespacing:**
+```yaml
+# Pod annotation
+eni-tagger.io/tags: '{"CostCenter":"123","Team":"Dev"}'
+
+# ENI tags applied
+CostCenter=123, Team=Dev
+```
+
+**After enabling namespacing:**
+```yaml
+# Same pod annotation
+eni-tagger.io/tags: '{"CostCenter":"123","Team":"Dev"}'
+
+# ENI tags updated to
+default:CostCenter=123, default:Team=Dev
+```
+
+### Side Effects & Considerations
+
+- **Automatic Migration**: All existing ENIs are updated during normal reconciliation
+- **Temporary Duplication**: ENIs may temporarily have both old and new tag formats
+- **AWS API Usage**: Each ENI requires additional API calls for the transition
+- **Rate Limiting**: Large clusters may hit AWS API limits - monitor and adjust `--aws-rate-limit-qps`
+- **Gradual Rollout**: Updates occur during pod lifecycle events (may take time for full migration)
+
+### Best Practices for Migration
+
+1. **Monitor AWS API Usage**: Watch CloudWatch metrics for throttling
+2. **Schedule During Low Traffic**: Enable during maintenance windows
+3. **Increase Rate Limits if Needed**:
+   ```bash
+   --aws-rate-limit-qps=20 --aws-rate-limit-burst=50
+   ```
+4. **Verify Tag Cleanup**: Ensure old non-namespaced tags are removed
+
+---
+
 ## AWS Tagging Best Practices
 
 ### Tag Naming Conventions
