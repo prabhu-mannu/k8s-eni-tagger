@@ -110,8 +110,9 @@ func (r *rateLimiter) Wait(ctx context.Context) error {
 			// Context canceled while waiting
 			return ctx.Err()
 		case <-time.After(waitTime):
-			// Loop back to try acquiring a token again with updated state
-			// This handles the case where another goroutine consumed tokens during our wait
+			// Loop back to refill tokens based on elapsed time during wait
+			// This ensures we account for all elapsed time, even if other goroutines
+			// consumed tokens while we were waiting
 			continue
 		}
 	}
