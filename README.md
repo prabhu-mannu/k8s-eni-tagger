@@ -84,8 +84,8 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--watch-namespace`           | `""` (all)           | Namespace to watch. If empty, watches all.                                   |
 | `--max-concurrent-reconciles` | `1`                  | Number of concurrent worker threads.                                         |
 | `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).                                        |
-| `--metrics-bind-address`      | `:8090`              | Address to bind Prometheus metrics.                                          |
-| `--health-probe-bind-address` | `:8081`              | Address to bind health probes.                                               |
+| `--metrics-bind-address`      | `8090`               | Port or address for Prometheus metrics. Bare ports are auto-prefixed with `:`. |
+| `--health-probe-bind-address` | `8081`               | Port or address for health probes. Bare ports are auto-prefixed with `:`.    |
 | `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs.                                  |
 | `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs.                                                |
 | `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching.                                                |
@@ -94,8 +94,25 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
 | `--tag-namespace`             | `""` (disabled)      | Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value disables namespacing. |
+| `--pod-rate-limit-qps`        | `0.1`                | Per-pod reconciliation rate limit (requests per second).                     |
+| `--pod-rate-limit-burst`      | `1`                  | Burst size for per-pod rate limiter.                                         |
+| `--rate-limiter-cleanup-interval` | `1m`             | Interval for pruning stale per-pod rate limiters.                            |
 
 ---
+
+### Environment variable fallbacks
+
+Most CLI flags can be set via environment variables using the `ENI_TAGGER_` prefix. For example:
+
+- `--dry-run` -> `ENI_TAGGER_DRY_RUN=true`
+- `--metrics-bind-address` -> `ENI_TAGGER_METRICS_BIND_ADDRESS="8090"`
+- `--aws-rate-limit-qps` -> `ENI_TAGGER_AWS_RATE_LIMIT_QPS=20`
+
+Rules:
+- CLI flags take precedence over environment variables.
+- If the CLI flag is not supplied and an env var is present, the env value is used.
+- Subnet IDs can also be set via `ENI_TAGGER_SUBNET_IDS` (comma-separated list).
+
 
 ## Enabling Namespace Tagging on Existing Deployments
 

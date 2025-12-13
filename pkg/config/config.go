@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,8 +41,8 @@ func Load() (*Config, error) {
 	cfg := &Config{}
 	var subnetIDs string
 
-	flag.StringVar(&cfg.MetricsBindAddress, "metrics-bind-address", ":8090", "The address the metric endpoint binds to.")
-	flag.StringVar(&cfg.HealthProbeBindAddress, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&cfg.MetricsBindAddress, "metrics-bind-address", "8090", "Port (or address) the metrics endpoint binds to. Use plain port (e.g., 8090) or address:port (e.g., 0.0.0.0:8090).")
+	flag.StringVar(&cfg.HealthProbeBindAddress, "health-probe-bind-address", "8081", "Port (or address) the health probe endpoint binds to. Use plain port (e.g., 8081) or address:port.")
 	flag.BoolVar(&cfg.EnableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -72,13 +73,154 @@ func Load() (*Config, error) {
 	// Per-pod rate limiting flags
 	flag.Float64Var(&cfg.PodRateLimitQPS, "pod-rate-limit-qps", 0.1, "Per-pod reconciliation rate limit (requests per second). Default 0.1 = 1 reconciliation every 10 seconds per pod.")
 	flag.IntVar(&cfg.PodRateLimitBurst, "pod-rate-limit-burst", 1, "Per-pod rate limit burst size (allows brief bursts above QPS).")
-	flag.DurationVar(&cfg.RateLimiterCleanupInterval, "rate-limiter-cleanup-interval", 5*time.Minute, "Interval for cleaning up stale pod rate limiters (e.g., 5m).")
+	flag.DurationVar(&cfg.RateLimiterCleanupInterval, "rate-limiter-cleanup-interval", 1*time.Minute, "Interval for cleaning up stale pod rate limiters (e.g., 1m).")
 
 	flag.Parse()
+
+	// Helper to get the current value & default value of a flag
+	getFlagValues := func(name string) (string, string) {
+		f := flag.Lookup(name)
+		if f == nil {
+			return "", ""
+		}
+		return f.Value.String(), f.DefValue
+	}
+
+	// Environment variable fallbacks: if the CLI flag was not provided
+	// (the current value equals the flag DefValue), and an env var exists,
+	// the env var will override the default.
+	if v := os.Getenv("ENI_TAGGER_METRICS_BIND_ADDRESS"); v != "" {
+		if curr, def := getFlagValues("metrics-bind-address"); curr == def {
+			cfg.MetricsBindAddress = v
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_HEALTH_PROBE_BIND_ADDRESS"); v != "" {
+		if curr, def := getFlagValues("health-probe-bind-address"); curr == def {
+			cfg.HealthProbeBindAddress = v
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_LEADER_ELECT"); v != "" {
+		if curr, def := getFlagValues("leader-elect"); curr == def {
+			if b, err := strconv.ParseBool(v); err == nil {
+				cfg.EnableLeaderElection = b
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_ANNOTATION_KEY"); v != "" {
+		if curr, def := getFlagValues("annotation-key"); curr == def {
+			cfg.AnnotationKey = v
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_MAX_CONCURRENT_RECONCILES"); v != "" {
+		if curr, def := getFlagValues("max-concurrent-reconciles"); curr == def {
+			if i, err := strconv.Atoi(v); err == nil {
+				cfg.MaxConcurrentReconciles = i
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_DRY_RUN"); v != "" {
+		if curr, def := getFlagValues("dry-run"); curr == def {
+			if b, err := strconv.ParseBool(v); err == nil {
+				cfg.DryRun = b
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_WATCH_NAMESPACE"); v != "" {
+		if curr, def := getFlagValues("watch-namespace"); curr == def {
+			cfg.WatchNamespace = v
+		}
+	}
+
+	if v := os.Getenv("ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING"); v != "" {
+		if curr, def := getFlagValues("allow-shared-eni-tagging"); curr == def {
+			if b, err := strconv.ParseBool(v); err == nil {
+				cfg.AllowSharedENITagging = b
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_ENABLE_ENI_CACHE"); v != "" {
+		if curr, def := getFlagValues("enable-eni-cache"); curr == def {
+			if b, err := strconv.ParseBool(v); err == nil {
+				cfg.EnableENICache = b
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_ENABLE_CACHE_CONFIGMAP"); v != "" {
+		if curr, def := getFlagValues("enable-cache-configmap"); curr == def {
+			if b, err := strconv.ParseBool(v); err == nil {
+				cfg.EnableCacheConfigMap = b
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_CACHE_BATCH_INTERVAL"); v != "" {
+		if curr, def := getFlagValues("cache-batch-interval"); curr == def {
+			if d, err := time.ParseDuration(v); err == nil {
+				cfg.CacheBatchInterval = d
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_CACHE_BATCH_SIZE"); v != "" {
+		if curr, def := getFlagValues("cache-batch-size"); curr == def {
+			if i, err := strconv.Atoi(v); err == nil {
+				cfg.CacheBatchSize = i
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_AWS_RATE_LIMIT_QPS"); v != "" {
+		if curr, def := getFlagValues("aws-rate-limit-qps"); curr == def {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.AWSRateLimitQPS = f
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_AWS_RATE_LIMIT_BURST"); v != "" {
+		if curr, def := getFlagValues("aws-rate-limit-burst"); curr == def {
+			if i, err := strconv.Atoi(v); err == nil {
+				cfg.AWSRateLimitBurst = i
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_PPROF_BIND_ADDRESS"); v != "" {
+		if curr, def := getFlagValues("pprof-bind-address"); curr == def {
+			cfg.PprofBindAddress = v
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_TAG_NAMESPACE"); v != "" {
+		if curr, def := getFlagValues("tag-namespace"); curr == def {
+			cfg.TagNamespace = v
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_POD_RATE_LIMIT_QPS"); v != "" {
+		if curr, def := getFlagValues("pod-rate-limit-qps"); curr == def {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.PodRateLimitQPS = f
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_POD_RATE_LIMIT_BURST"); v != "" {
+		if curr, def := getFlagValues("pod-rate-limit-burst"); curr == def {
+			if i, err := strconv.Atoi(v); err == nil {
+				cfg.PodRateLimitBurst = i
+			}
+		}
+	}
+	if v := os.Getenv("ENI_TAGGER_RATE_LIMITER_CLEANUP_INTERVAL"); v != "" {
+		if curr, def := getFlagValues("rate-limiter-cleanup-interval"); curr == def {
+			if d, err := time.ParseDuration(v); err == nil {
+				cfg.RateLimiterCleanupInterval = d
+			}
+		}
+	}
 
 	if cfg.PrintVersion {
 		return cfg, nil
 	}
+
+	// Normalize bind addresses so bare ports (e.g., "8090") become ":8090",
+	// while existing addresses with ":" are left untouched.
+	cfg.MetricsBindAddress = normalizeBindAddress(cfg.MetricsBindAddress)
+	cfg.HealthProbeBindAddress = normalizeBindAddress(cfg.HealthProbeBindAddress)
+	cfg.PprofBindAddress = normalizeBindAddress(cfg.PprofBindAddress)
 
 	// Handle Env Var fallback for subnet-ids
 	if subnetIDs == "" {

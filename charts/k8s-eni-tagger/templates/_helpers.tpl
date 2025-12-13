@@ -1,15 +1,9 @@
-{{/*
-Expand the name of the chart.
-*/}}
+{{/* Common helper templates for k8s-eni-tagger chart */}}
+
 {{- define "k8s-eni-tagger.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
 {{- define "k8s-eni-tagger.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
@@ -23,16 +17,15 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 {{- end }}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
 {{- define "k8s-eni-tagger.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Common labels
-*/}}
+{{- define "k8s-eni-tagger.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "k8s-eni-tagger.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
 {{- define "k8s-eni-tagger.labels" -}}
 helm.sh/chart: {{ include "k8s-eni-tagger.chart" . }}
 {{ include "k8s-eni-tagger.selectorLabels" . }}
@@ -42,17 +35,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{/*
-Selector labels
-*/}}
-{{- define "k8s-eni-tagger.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "k8s-eni-tagger.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
 {{- define "k8s-eni-tagger.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "k8s-eni-tagger.fullname" .) .Values.serviceAccount.name }}
@@ -61,14 +43,69 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
-{{/*
-Determine if leader election should be enabled
-Automatically enabled when replicaCount > 1
-*/}}
 {{- define "k8s-eni-tagger.leaderElectionEnabled" -}}
-{{- if gt (int .Values.replicaCount) 1 }}
-{{- true }}
+{{- if or (gt (int .Values.replicaCount) 1) (default false .Values.config.enableLeaderElection) }}
+true
 {{- else }}
-{{- false }}
+false
+{{- end }}
+{{- end }}
+
+{{/* ConfigMap name for env injection */}}
+{{- define "k8s-eni-tagger.envConfigMapName" -}}
+{{- if .Values.configMap.name }}
+{{- .Values.configMap.name }}
+{{- else }}
+{{- printf "%s-config" (include "k8s-eni-tagger.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/* Build ConfigMap data from config values and extra env map. */}}
+{{- define "k8s-eni-tagger.envBuildConfigMapData" -}}
+{{- $root := . -}}
+{{- $c := .Values.config -}}
+{{- $leader := or (gt (int .Values.replicaCount) 1) (default false $c.enableLeaderElection) -}}
+{{- $data := dict }}
+{{- /* Required / always-present settings */}}
+{{- $_ := set $data "ENI_TAGGER_ANNOTATION_KEY" $c.annotationKey }}
+{{- $_ := set $data "ENI_TAGGER_MAX_CONCURRENT_RECONCILES" $c.maxConcurrentReconciles }}
+{{- $_ := set $data "ENI_TAGGER_DRY_RUN" $c.dryRun }}
+{{- $_ := set $data "ENI_TAGGER_METRICS_BIND_ADDRESS" $c.metricsBindAddress }}
+{{- $_ := set $data "ENI_TAGGER_HEALTH_PROBE_BIND_ADDRESS" $c.healthProbeBindAddress }}
+{{- $_ := set $data "ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING" $c.allowSharedENITagging }}
+{{- $_ := set $data "ENI_TAGGER_ENABLE_ENI_CACHE" $c.enableENICache }}
+{{- $_ := set $data "ENI_TAGGER_ENABLE_CACHE_CONFIGMAP" $c.enableCacheConfigMap }}
+{{- $_ := set $data "ENI_TAGGER_CACHE_BATCH_INTERVAL" $c.cacheBatchInterval }}
+{{- $_ := set $data "ENI_TAGGER_CACHE_BATCH_SIZE" $c.cacheBatchSize }}
+{{- $_ := set $data "ENI_TAGGER_AWS_RATE_LIMIT_QPS" $c.awsRateLimitQPS }}
+{{- $_ := set $data "ENI_TAGGER_AWS_RATE_LIMIT_BURST" $c.awsRateLimitBurst }}
+{{- $_ := set $data "ENI_TAGGER_PPROF_BIND_ADDRESS" $c.pprofBindAddress }}
+{{- $_ := set $data "ENI_TAGGER_POD_RATE_LIMIT_QPS" $c.podRateLimitQPS }}
+{{- $_ := set $data "ENI_TAGGER_POD_RATE_LIMIT_BURST" $c.podRateLimitBurst }}
+{{- $_ := set $data "ENI_TAGGER_RATE_LIMITER_CLEANUP_INTERVAL" $c.rateLimiterCleanupInterval }}
+
+{{- /* Derived leader election: only emit env when it would be true */}}
+{{- if $leader }}
+{{- $_ := set $data "ENI_TAGGER_LEADER_ELECT" true }}
+{{- end }}
+
+{{- /* Optional strings: include only when non-empty for cleaner UX */}}
+{{- if $c.subnetIDs }}
+{{- $_ := set $data "ENI_TAGGER_SUBNET_IDS" $c.subnetIDs }}
+{{- end }}
+{{- if $c.tagNamespace }}
+{{- $_ := set $data "ENI_TAGGER_TAG_NAMESPACE" $c.tagNamespace }}
+{{- end }}
+{{- if $c.watchNamespace }}
+{{- $_ := set $data "ENI_TAGGER_WATCH_NAMESPACE" $c.watchNamespace }}
+{{- end }}
+
+{{- /* Merge user-provided extra env */}}
+{{- if .Values.env }}
+{{- $data = merge $data .Values.env }}
+{{- end }}
+
+{{- range $key := keys $data | sortAlpha }}
+{{ $key }}: {{ tpl (printf "%v" (index $data $key)) $root | quote }}
 {{- end }}
 {{- end }}

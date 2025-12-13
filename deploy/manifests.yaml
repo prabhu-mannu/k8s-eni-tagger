@@ -6,7 +6,11 @@ metadata:
   annotations:
     # Replace with your IAM Role ARN for IRSA
     # eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/my-eni-tagger-role
-    # eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/my-eni-tagger-role
+# Whether Kubernetes should auto-mount a service account token in the pod.
+# If set to false, the controller will not receive a mounted token. Use this
+# to reduce surface area for compromise when a token is not necessary, or when
+# another method (like node-role or IRSA with projected tokens) is preferred.
+automountServiceAccountToken: true
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -14,16 +18,43 @@ metadata:
   name: k8s-eni-tagger-config
   namespace: default
 data:
-  # Comma-separated list of subnet IDs where tagging is allowed
-  # Leave empty to allow all (subject to safety checks)
+  # Comma-separated list of subnet IDs where tagging is allowed.
+  # This value maps to the controller's `--subnet-ids` flag and restricts
+  # ENI tagging to the listed subnet(s). Leave it empty to allow tagging for
+  # all subnets (the controller still applies safety checks such as avoiding
+  # shared ENIs when that behavior is disabled).
   ENI_TAGGER_SUBNET_IDS: ""
-  # Set to "true" to allow tagging of shared ENIs (DANGEROUS)
-  # ENI_TAGGER_ALLOW_SHARED: "false"
+  # NOTE: To allow tagging of shared ENIs (DANGEROUS), add the
+  # flag `--allow-shared-eni-tagging` to the container args below.
+  # The application does not directly read `ENI_TAGGER_ALLOW_SHARED` from env.
+  # Optional additional configuration values exposed as envs. These are read
+  # into the container's environment and correspond to CLI flags as shown.
+  # Use the env prefixed with ENI_TAGGER_ to configure the controller via
+  # environment variables instead of CLI args (CLI args take precedence).
+  # Examples (uncomment and set your desired values):
+  # ENI_TAGGER_METRICS_BIND_ADDRESS: "8090"  # bare port; controller will prefix with ':'
+  # ENI_TAGGER_HEALTH_PROBE_BIND_ADDRESS: "8081"
+  # ENI_TAGGER_ANNOTATION_KEY: "eni-tagger.io/tags"
+  # ENI_TAGGER_LEADER_ELECT: "false"
+  # ENI_TAGGER_DRY_RUN: "false"
+  # ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING: "false"
+  # ENI_TAGGER_ENABLE_CACHE_CONFIGMAP: "false"
+  # ENI_TAGGER_CACHE_BATCH_INTERVAL: "2s"
+  # ENI_TAGGER_CACHE_BATCH_SIZE: "20"
+  # ENI_TAGGER_AWS_RATE_LIMIT_QPS: "10"
+  # ENI_TAGGER_AWS_RATE_LIMIT_BURST: "20"
+  # ENI_TAGGER_PPROF_BIND_ADDRESS: "0"
+  # ENI_TAGGER_TAG_NAMESPACE: ""  # Set to 'enable' to namespace tags
+  # AWS_REGION: "us-east-1"
+  # AWS_DEFAULT_REGION: "us-east-1"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: k8s-eni-tagger-role
+  # Grant the controller the minimal necessary permissions. The controller
+  # needs to watch and read Pods, update Pod status, and emit Kubernetes
+  # events to provide observability on reconcilation actions.
 rules:
 - apiGroups: [""]
   resources: ["pods"]
@@ -39,6 +70,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: k8s-eni-tagger-rolebinding
+# Binds the service account to the ClusterRole above. This ensures the pods
+# running with the `k8s-eni-tagger` service account have the permissions
+# declared in the ClusterRole.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -56,31 +90,104 @@ metadata:
   labels:
     app: k8s-eni-tagger
 spec:
+  # Replica count: set to 1 by default. If running multiple replicas,
+  # enable leader election via the `--leader-elect` flag to ensure a single
+  # active reconciling manager.
   replicas: 1
   selector:
     matchLabels:
       app: k8s-eni-tagger
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8090"
+        prometheus.io/path: "/metrics"
       labels:
         app: k8s-eni-tagger
     spec:
+      # The service account used by the controller. If using IRSA, set the
+      # service account's annotation above to grant an IAM role to the pod.
       serviceAccountName: k8s-eni-tagger
       containers:
       - name: manager
-        image: REPLACE_WITH_YOUR_IMAGE:latest
-        imagePullPolicy: Always
+        # The container image for the controller. Use a pinned tag (recommended)
+        # for production to ensure reproducible deployments. `latest` is used
+        # here for quick testing. Replace with a release/tag as needed.
+        image: ghcr.io/prabhu-mannu/k8s-eni-tagger:latest
+        # imagePullPolicy controls when Kubernetes pulls the image. Use
+        # IfNotPresent for tagged images to prevent pulling the same tag on
+        # restart, and Always for CI or when using `latest` to ensure freshness.
+        imagePullPolicy: IfNotPresent
+        # Security context helps enforce least-privilege execution of the
+        # container. Running non-root and dropping capabilities reduces the
+        # attack surface. Adjust these values if your container needs specific
+        # capabilities or file system access.
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
         command:
         - /manager
+        # CLI args passed into the controller. These correspond to flags
+        # defined by the application; adjust as appropriate for your cluster.
         args:
-        - --leader-elect
-        env:
-        - name: ENI_TAGGER_SUBNET_IDS
-          valueFrom:
-            configMapKeyRef:
-              name: k8s-eni-tagger-config
-              key: ENI_TAGGER_SUBNET_IDS
-              optional: true
+        - --annotation-key=eni-tagger.io/tags # Pod annotation key to watch for tag JSON (env: ENI_TAGGER_ANNOTATION_KEY)
+        - --max-concurrent-reconciles=1 # Max parallel reconciliations; increase for larger clusters (env: ENI_TAGGER_MAX_CONCURRENT_RECONCILES)
+        - --metrics-bind-address=8090 # Metrics endpoint (Prometheus) (env: ENI_TAGGER_METRICS_BIND_ADDRESS)
+        - --health-probe-bind-address=8081 # Health probes for Kubernetes (env: ENI_TAGGER_HEALTH_PROBE_BIND_ADDRESS)
+        - --leader-elect # When running >1 replica, enable leader election to avoid duplicate work (env: ENI_TAGGER_LEADER_ELECT)
+        # Optional: limit tagging to specific subnet IDs using `--subnet-ids`.
+        # Example: - --subnet-ids=subnet-12345678,subnet-23456789
+        # following (example values):
+        # - --subnet-ids=subnet-12345678,subnet-23456789
+        # To allow tagging of shared ENIs (dangerous), uncomment the following:
+        # - --allow-shared-eni-tagging # WARNING: Be careful—can cause tag thrash on multi-tenant clusters (env: ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING)
+        - --cache-batch-interval=2s # ConfigMap cache commit interval when persistence is enabled (env: ENI_TAGGER_CACHE_BATCH_INTERVAL)
+        - --cache-batch-size=20 # Max batch size for cache flushes to ConfigMap (env: ENI_TAGGER_CACHE_BATCH_SIZE)
+        - --aws-rate-limit-qps=10 # AWS API QPS rate limiting; bump for larger clusters (env: ENI_TAGGER_AWS_RATE_LIMIT_QPS)
+        - --aws-rate-limit-burst=20 # AWS API burst size (env: ENI_TAGGER_AWS_RATE_LIMIT_BURST)
+        - --pprof-bind-address=0 # pprof can be enabled by setting to a port e.g. 6060 (env: ENI_TAGGER_PPROF_BIND_ADDRESS)
+        # Optional flags you may find useful during testing or specific ops:
+        # - --dry-run                  # Enable dry-run: will not make AWS changes (env: ENI_TAGGER_DRY_RUN)
+        # - --watch-namespace=my-namespace # Only watch pods in one Kubernetes namespace (env: ENI_TAGGER_WATCH_NAMESPACE)
+        # - --tag-namespace=enable     # Prefix tags with the pod's k8s namespace (env: ENI_TAGGER_TAG_NAMESPACE)
+        # - --pod-rate-limit-qps=0.1   # Per-pod reconciliation rate (10 seconds per doc) (env: ENI_TAGGER_POD_RATE_LIMIT_QPS)
+        # - --pod-rate-limit-burst=1   # Burst size for per-pod rate limiter (env: ENI_TAGGER_POD_RATE_LIMIT_BURST)
+        # - --rate-limiter-cleanup-interval=1m  # Interval to clean up stale per-pod rate limiters (env: ENI_TAGGER_RATE_LIMITER_CLEANUP_INTERVAL)
+        # Load environment variables from the ConfigMap above. This makes
+        # config values available to the binary as env vars (e.g., ENI_TAGGER_SUBNET_IDS).
+        # The ConfigMap key becomes the environment variable name when
+        # using `envFrom` (e.g., key ENI_TAGGER_SUBNET_IDS -> env var ENI_TAGGER_SUBNET_IDS).
+        # Notes:
+        #  - envFrom: injects all keys from the ConfigMap as env vars.
+        #  - Keys in the ConfigMap must be valid environment variable names
+        #    (C_IDENTIFIER: [A-Za-z_][A-Za-z0-9_]*). Keys with invalid
+        #    characters may be skipped and generate an event.
+        #  - Use `optional: true` to avoid pod creation failures when the
+        #    ConfigMap is absent.
+        # If you prefer to map only specific keys or want to use a
+        # different env var name, use `env` with `valueFrom: configMapKeyRef`.
+        envFrom:
+        - configMapRef:
+            name: k8s-eni-tagger-config
+            optional: true
+          # prefix: "TAGGER_" # Uncomment to prefix all env vars with TAGGER_
+        # Example of mapping a specific key only (useful if ConfigMap keys
+        # are not valid env var names or you want a different env var name):
+        # env:
+        # - name: ENI_TAGGER_SUBNET_IDS
+        #   valueFrom:
+        #     configMapKeyRef:
+        #       name: k8s-eni-tagger-config
+        #       key: ENI_TAGGER_SUBNET_IDS
+        #       optional: true
+        # Resource requests and limits. Tune to match your cluster size & load.
+        # Requests tell Kubernetes how much to reserve for the pod; limits
+        # constrain the maximum CPU/memory the container can use.
         resources:
           limits:
             cpu: 500m
@@ -88,3 +195,65 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+        # Exposed ports for metrics (Prometheus) and health probes.
+        ports:
+          - name: metrics
+            containerPort: 8090
+            protocol: TCP
+          - name: health
+            containerPort: 8081
+            protocol: TCP
+        # Startup probe: runs once on startup to validate AWS connectivity and
+        # permission to call AWS APIs. This gives the controller up to 5 minutes
+        # to validate IAM permissions and reachability before failing.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          failureThreshold: 30
+          periodSeconds: 10
+        # Liveness probe: simple endpoint check to detect deadlocks or blocking
+        # behavior in the running process (does not call AWS APIs by design).
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        # Readiness probe: ensures the manager is ready to handle reconcile
+        # requests. It does not make AWS API calls and will be true when the
+        # controller is ready to accept work.
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+---
+---
+# Metrics Service for Prometheus scraping (ClusterIP)
+# This Service exposes the /metrics endpoint on port 8090 so a Prometheus
+# server can scrape metrics from the controller. If you use a ServiceMonitor
+# (Prometheus Operator), annotate or configure accordingly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-eni-tagger-metrics
+  namespace: default
+  labels:
+    app: k8s-eni-tagger
+    app.kubernetes.io/component: metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8090
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    app: k8s-eni-tagger

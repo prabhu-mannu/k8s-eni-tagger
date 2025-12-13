@@ -44,8 +44,8 @@ config:
   maxConcurrentReconciles: 10
   dryRun: false
   enableLeaderElection: true  # Required for HA
-  metricsBindAddress: ":8090"
-  healthProbeBindAddress: ":8081"
+  metricsBindAddress: "8090"
+  healthProbeBindAddress: "8081"
   
   # Subnet filtering (optional)
   # subnetIDs: "subnet-xxxxx,subnet-yyyyy"
@@ -63,6 +63,18 @@ config:
   
   # Disable profiling in production
   pprofBindAddress: "0"
+
+  # Per-pod rate limiting (DoS protection)
+  podRateLimitQPS: 0.1
+  podRateLimitBurst: 1
+  rateLimiterCleanupInterval: 1m
+
+# Generated ConfigMap that contains ENI_TAGGER_* env variables derived from
+# `.Values.config` and `.Values.env`. Disable to provide your own ConfigMap
+# instead.
+configMap:
+  create: true
+  name: ""
 
 # Environment variables (optional)
 env:

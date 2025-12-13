@@ -146,7 +146,6 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 }
 
 // GetEC2Client returns the underlying EC2 client for sharing with other components
-// GetEC2Client returns the underlying EC2 client for sharing with other components
 // Note: This now returns an interface, callers may need to type assert if they need the specific struct
 // but for general usage the interface should suffice if extended.
 // However, since we return *ec2.Client in the interface, we might have to cast it or change the interface return type.
