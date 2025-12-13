@@ -120,6 +120,41 @@ func TestApplyNamespace(t *testing.T) {
 			expected:  nil,
 			expectErr: true,
 		},
+		{
+			name:      "namespace at max length (63 chars)",
+			tags:      map[string]string{"Key": "value"},
+			namespace: strings.Repeat("a", 63),
+			expected:  map[string]string{strings.Repeat("a", 63) + ":Key": "value"},
+			expectErr: false,
+		},
+		{
+			name:      "key exactly at limit with namespace",
+			tags:      map[string]string{strings.Repeat("a", 63): "value"},
+			namespace: strings.Repeat("b", 63),
+			expected:  map[string]string{strings.Repeat("b", 63) + ":" + strings.Repeat("a", 63): "value"},
+			expectErr: false, // 63 + 1 + 63 = 127, exactly at limit
+		},
+		{
+			name:      "key at limit without namespace",
+			tags:      map[string]string{strings.Repeat("a", 127): "value"},
+			namespace: "",
+			expected:  map[string]string{strings.Repeat("a", 127): "value"},
+			expectErr: false,
+		},
+		{
+			name:      "namespace with valid special chars",
+			tags:      map[string]string{"Test": "value"},
+			namespace: "my-org.test_123",
+			expected:  map[string]string{"my-org.test_123:Test": "value"},
+			expectErr: false,
+		},
+		{
+			name:      "key exceeds limit with namespace",
+			tags:      map[string]string{strings.Repeat("a", 64): "value"},
+			namespace: strings.Repeat("b", 63),
+			expected:  nil,
+			expectErr: true, // 63 + 1 + 64 = 128, exceeds 127
+		},
 	}
 
 	for _, tt := range tests {
