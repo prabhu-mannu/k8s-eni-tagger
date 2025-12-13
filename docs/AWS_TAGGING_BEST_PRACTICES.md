@@ -413,7 +413,7 @@ var (
 | Gap | Severity | Recommendation |
 |-----|----------|----------------|
 | **IMDS compatibility** | Low | Add optional `--imds-compatible-tags` flag to restrict spaces and `/` |
-| **Namespace support** | Low | Add optional `--tag-namespace` prefix for enterprise scenarios |
+| **Namespace support** | Low | Extend `--tag-namespace` flag to support arbitrary prefixes (currently only 'enable' for pod namespaces) |
 | **Tag key conventions** | Informational | Document recommended PascalCase convention in README |
 | **Value validation strictness** | None | Current implementation allows empty values (AWS compliant) |
 
@@ -423,10 +423,12 @@ var (
 
 **Purpose:** Support users who enable tags in EC2 instance metadata
 
-**Implementation:**
+**Current Implementation:** Only `--tag-namespace=enable` is supported for pod namespace-based namespacing.
+
+**Proposed Enhancement:**
 ```go
-// main.go
-tagNamespace := flag.String("tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp')")
+// main.go (proposed future enhancement)
+tagNamespace := flag.String("tag-namespace", "", "Optional namespace prefix for all tags. Use 'enable' for pod namespace-based namespacing, or set a custom prefix (e.g., 'acme-corp')")
 imdsCompatible := flag.Bool("imds-compatible-tags", false, "Enforce IMDS-compatible tag restrictions (no spaces or /)")
 ```
 

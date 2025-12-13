@@ -9,7 +9,8 @@ import (
 )
 
 // StartRateLimiterCleanup starts a background goroutine that periodically cleans up
-// stale pod rate limiters from pods that no longer exist.
+// stale pod rate limiters that haven't been accessed for RateLimiterCleanupThreshold duration.
+// This prevents memory leaks from deleted pods whose rate limiters remain in the map.
 func (r *PodReconciler) StartRateLimiterCleanup(ctx context.Context, interval time.Duration) {
 	if interval <= 0 || r.PodRateLimitQPS <= 0 {
 		return // Cleanup disabled
