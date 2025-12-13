@@ -1,8 +1,11 @@
 # Canonicalize contributor identities.
 #
-# This repository historically had commits authored as "prabhumannu". The canonical
+# This repository historically had commits authored with various names. The canonical
 # GitHub username is "prabhu-mannu".
 #
 # Format: Proper Name <proper@email>  Commit Name <commit@email>
 
 prabhu-mannu <prabhu.mannu@gmail.com> prabhumannu <prabhu.mannu@gmail.com>
+prabhu-mannu <prabhu.mannu@gmail.com> Prabhu M <prabhu.mannu@gmail.com>
+prabhu-mannu <prabhu.mannu@gmail.com> Prabhu Mannu <13073108+prabhu-mannu@users.noreply.github.com>
+prabhu-mannu <prabhu.mannu@gmail.com> Prabhu Mannu <prabhu.mannu@gmail.com>
