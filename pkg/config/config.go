@@ -63,7 +63,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.PprofBindAddress, "pprof-bind-address", "0", "The address the pprof endpoint binds to. Set to '0' to disable.")
 
 	// Tag namespace flag
-	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). Useful for multi-tenant scenarios.")
+	flag.StringVar(&cfg.TagNamespace, "tag-namespace", "", "Optional namespace prefix for all tags (e.g., 'acme-corp' becomes 'acme-corp:CostCenter'). If empty, uses the pod's Kubernetes namespace. Useful for multi-tenant scenarios.")
 
 	flag.Parse()
 

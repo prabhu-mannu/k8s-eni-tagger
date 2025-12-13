@@ -101,10 +101,10 @@ func validateParsedTags(tags map[string]string) (map[string]string, error) {
 	return tags, nil
 }
 
-// applyNamespace applies a namespace prefix to all tag keys if namespace is configured.
+// applyNamespace applies a namespace prefix to all tag keys.
+// The namespace comes from either the --tag-namespace flag or the pod's Kubernetes namespace.
 // For example, with namespace "acme-corp", the tag "CostCenter=1234" becomes "acme-corp:CostCenter=1234".
-// This is useful for enterprise multi-tenant scenarios to prevent tag key conflicts.
-// Returns the original tags if namespace is empty.
+// This provides automatic namespacing for multi-tenant scenarios to prevent tag key conflicts.
 // Validates that resulting keys do not exceed MaxTagKeyLength.
 func applyNamespace(tags map[string]string, namespace string) (map[string]string, error) {
 	if namespace == "" {

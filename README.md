@@ -93,7 +93,7 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--aws-rate-limit-qps`        | `10`                 | AWS API rate limit (requests per second).                                    |
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
-| `--tag-namespace`             | `""` (none)           | Optional namespace prefix for tags (e.g., `acme-corp:CostCenter`).           |
+| `--tag-namespace`             | `""` (pod namespace)  | Optional namespace prefix for tags (e.g., `acme-corp:CostCenter`). If empty, uses pod's Kubernetes namespace. |
 
 ---
 
