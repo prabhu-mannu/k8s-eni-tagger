@@ -187,7 +187,9 @@ example-inc:cost-allocation:business-unit=engineering
 
 **Consideration for k8s-eni-tagger:**
 - Could add optional namespace prefix configuration
-- Example: `--tag-namespace=acme-corp` → all tags become `acme-corp:CostCenter=1234`
+ - Use `--tag-namespace=enable` to enable automatic namespacing using the Pod's Kubernetes namespace. Example:
+     `--tag-namespace=enable` → a `production`-pod's tags become `production:CostCenter=1234`.
+     Note: Setting an arbitrary value (e.g., `acme-corp`) is not supported and will be treated as disabled.
 - Would help enterprises with complex organizational structures
 
 ---
@@ -445,7 +447,7 @@ var (
 
 **Implementation:**
 ```go
-// Example: --tag-namespace=acme
+// Example: --tag-namespace=enable  (uses the pod's kube namespace as prefix)
 // Input:  CostCenter=1234
 // Output: acme:CostCenter=1234
 

@@ -70,43 +70,43 @@ func TestReconcile(t *testing.T) {
 					Name:      "pod-no-annotation",
 					Namespace: "default",
 				},
-				{
-					name: "Deletion - Untag transient errors with retries",
-					pod: &corev1.Pod{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "pod-delete-retry",
-							Namespace: "default",
-							Annotations: map[string]string{
-								AnnotationKey:            validTags,
-								LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
-								LastAppliedHashKey:       "dummy-hash",
-							},
-							Finalizers:        []string{finalizerName},
-							DeletionTimestamp: &metav1.Time{Time: time.Now()},
-						},
-						Status: corev1.PodStatus{
-							PodIP: "10.0.0.6",
-						},
-					},
-					mockSetup: func(m *MockAWSClient) {
-						m.On("GetENIInfoByIP", mock.Anything, "10.0.0.6").Return(&aws.ENIInfo{
-							ID: "eni-delete-retry",
-							Tags: map[string]string{
-								HashTagKey: "dummy-hash",
-							},
-						}, nil)
-
-						// Simulate two transient failures then success
-						call := m.On("UntagENI", mock.Anything, "eni-delete-retry", mock.MatchedBy(func(keys []string) bool {
-							return true
-						}))
-						call.Return(errors.New("transient error")).Once()
-						call.Return(errors.New("transient error")).Once()
-						call.Return(nil).Once()
-					},
-				},
 			},
 			mockSetup: func(m *MockAWSClient) {}, // No calls expected
+		},
+		{
+			name: "Deletion - Untag transient errors with retries",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-delete-retry",
+					Namespace: "default",
+					Annotations: map[string]string{
+						AnnotationKey:            validTags,
+						LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
+						LastAppliedHashKey:       "dummy-hash",
+					},
+					Finalizers:        []string{finalizerName},
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "10.0.0.6",
+				},
+			},
+			mockSetup: func(m *MockAWSClient) {
+				m.On("GetENIInfoByIP", mock.Anything, "10.0.0.6").Return(&aws.ENIInfo{
+					ID: "eni-delete-retry",
+					Tags: map[string]string{
+						HashTagKey: "dummy-hash",
+					},
+				}, nil)
+
+				// Simulate two transient failures then success
+				call := m.On("UntagENI", mock.Anything, "eni-delete-retry", mock.MatchedBy(func(keys []string) bool {
+					return true
+				}))
+				call.Return(errors.New("transient error")).Once()
+				call.Return(errors.New("transient error")).Once()
+				call.Return(nil).Once()
+			},
 		},
 		{
 			name: "No IP - Skip",
