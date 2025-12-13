@@ -101,6 +101,23 @@ func validateParsedTags(tags map[string]string) (map[string]string, error) {
 	return tags, nil
 }
 
+// applyNamespace applies a namespace prefix to all tag keys if namespace is configured.
+// For example, with namespace "acme-corp", the tag "CostCenter=1234" becomes "acme-corp:CostCenter=1234".
+// This is useful for enterprise multi-tenant scenarios to prevent tag key conflicts.
+// Returns the original tags if namespace is empty.
+func applyNamespace(tags map[string]string, namespace string) map[string]string {
+	if namespace == "" {
+		return tags
+	}
+
+	namespaced := make(map[string]string, len(tags))
+	for key, value := range tags {
+		namespacedKey := namespace + ":" + key
+		namespaced[namespacedKey] = value
+	}
+	return namespaced
+}
+
 // computeHash calculates a SHA-256 hash of the tag map for optimistic locking.
 // The hash is computed deterministically by sorting keys alphabetically before hashing.
 // This ensures the same set of tags always produces the same hash value.

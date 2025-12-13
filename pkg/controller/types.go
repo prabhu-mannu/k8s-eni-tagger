@@ -26,4 +26,5 @@ type PodReconciler struct {
 	DryRun                bool
 	SubnetIDs             []string
 	AllowSharedENITagging bool
+	TagNamespace          string
 }

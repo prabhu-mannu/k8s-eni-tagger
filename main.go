@@ -166,6 +166,7 @@ func main() {
 		DryRun:                cfg.DryRun,
 		SubnetIDs:             cfg.SubnetIDs,
 		AllowSharedENITagging: cfg.AllowSharedENITagging,
+		TagNamespace:          cfg.TagNamespace,
 	}).SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)

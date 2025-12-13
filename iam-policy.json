@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ENITaggingPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "HealthCheckPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAccountAttributes"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
