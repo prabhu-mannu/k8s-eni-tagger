@@ -32,11 +32,11 @@ You will need:
 
 ## Git Author Identity
 
-This repository uses a `.mailmap` file to normalize historical author identities.
-To ensure new commits use the expected author name, set your local git identity:
+This repository uses a `.mailmap` file to normalize historical author identities (e.g., for the repository owner or to fix past inconsistencies).
+As a contributor, please ensure your local git identity is set to your own name and email:
 
 ```bash
-git config user.name "prabhu-mannu"
+git config user.name "<your-name>"
 git config user.email "<your-email>"
 ```
 
