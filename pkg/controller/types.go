@@ -14,7 +14,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// RateLimiterEntry holds a rate limiter with its last access timestamp
+// RateLimiterEntry holds a rate limiter with its last access timestamp.
+// It is safe for concurrent use, with all mutable state protected by a mutex.
+// The rate limiter cannot be nil or modified after creation.
+//
+// Example:
+//
+//	entry, err := NewRateLimiterEntry(10.0, 5) // 10 QPS, burst 5
+//	if err != nil { /* handle error */ }
+//	entry.UpdateLastAccess(time.Now())
+//	if entry.Allow() {
+//	    // proceed with operation
+//	}
 type RateLimiterEntry struct {
 	limiter    *rate.Limiter // unexport to prevent nil assignment
 	lastAccess time.Time     // unexport to enforce mutex usage
@@ -52,6 +63,11 @@ func (e *RateLimiterEntry) GetLastAccess() time.Time {
 // Allow checks if the rate limiter allows the request
 func (e *RateLimiterEntry) Allow() bool {
 	return e.limiter.Allow()
+}
+
+// IsStaleAfter checks if the entry has been stale for longer than the given threshold
+func (e *RateLimiterEntry) IsStaleAfter(threshold time.Duration) bool {
+	return time.Since(e.GetLastAccess()) > threshold
 }
 
 // PodReconciler reconciles Pod objects and manages ENI tags

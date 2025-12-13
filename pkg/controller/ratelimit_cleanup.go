@@ -44,8 +44,6 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
-	cutoff := now.Add(-r.RateLimiterCleanupThreshold)
 	removed := 0
 
 	r.PodRateLimiters.Range(func(key, value interface{}) bool {
@@ -67,7 +65,7 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 
 		lastAccess := entry.GetLastAccess()
 
-		if lastAccess.Before(cutoff) {
+		if entry.IsStaleAfter(r.RateLimiterCleanupThreshold) {
 			r.PodRateLimiters.Delete(podKey)
 			removed++
 			logger.V(1).Info("Removed stale rate limiter", "pod", podKey, "lastAccess", lastAccess)

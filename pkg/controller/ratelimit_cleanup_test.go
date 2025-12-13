@@ -13,6 +13,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// newTestRateLimiterEntry creates a RateLimiterEntry for testing with a specific last access time.
+// The limiter field is nil since it's not needed for cleanup testing.
+func newTestRateLimiterEntry(lastAccess time.Time) *RateLimiterEntry {
+	return &RateLimiterEntry{
+		limiter:    nil,
+		lastAccess: lastAccess,
+	}
+}
+
 func TestStartRateLimiterCleanup(t *testing.T) {
 	t.Run("Disabled when interval is zero", func(t *testing.T) {
 		r := &PodReconciler{PodRateLimitQPS: 0.1}
@@ -85,14 +94,8 @@ func TestCleanupStaleLimiters(t *testing.T) {
 	ctx := context.Background()
 
 	// Add some limiters (one existing, one stale)
-	r.PodRateLimiters.Store("default/existing-pod", &RateLimiterEntry{
-		limiter:    nil, // Not needed for this test
-		lastAccess: time.Now(),
-	})
-	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		limiter:    nil,                        // Not needed for this test
-		lastAccess: time.Now().Add(-time.Hour), // Old enough to be cleaned up
-	})
+	r.PodRateLimiters.Store("default/existing-pod", newTestRateLimiterEntry(time.Now()))
+	r.PodRateLimiters.Store("default/stale-pod", newTestRateLimiterEntry(time.Now().Add(-time.Hour)))
 
 	// Run cleanup
 	r.cleanupStaleLimiters(ctx)
@@ -126,15 +129,9 @@ func TestCleanupStaleLimiters_ThresholdBehavior(t *testing.T) {
 
 	now := time.Now()
 	// Add limiters with different ages
-	r.PodRateLimiters.Store("default/recent-pod", &RateLimiterEntry{
-		lastAccess: now.Add(-10 * time.Minute), // Within threshold
-	})
-	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		lastAccess: now.Add(-45 * time.Minute), // Beyond threshold
-	})
-	r.PodRateLimiters.Store("default/just-inside-threshold", &RateLimiterEntry{
-		lastAccess: now.Add(-29 * time.Minute), // Just inside threshold
-	})
+	r.PodRateLimiters.Store("default/recent-pod", newTestRateLimiterEntry(now.Add(-10*time.Minute)))
+	r.PodRateLimiters.Store("default/stale-pod", newTestRateLimiterEntry(now.Add(-45*time.Minute)))
+	r.PodRateLimiters.Store("default/just-inside-threshold", newTestRateLimiterEntry(now.Add(-29*time.Minute)))
 
 	// Run cleanup
 	r.cleanupStaleLimiters(ctx)
@@ -159,9 +156,7 @@ func TestCleanupStaleLimiters_Disabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a stale limiter
-	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
-		lastAccess: time.Now().Add(-time.Hour),
-	})
+	r.PodRateLimiters.Store("default/stale-pod", newTestRateLimiterEntry(time.Now().Add(-time.Hour)))
 
 	// Run cleanup
 	r.cleanupStaleLimiters(ctx)
@@ -180,12 +175,8 @@ func TestCleanupStaleLimiters_InvalidKeyType(t *testing.T) {
 	ctx := context.Background()
 
 	// Add entries with invalid key types (this shouldn't happen in practice, but test safety)
-	r.PodRateLimiters.Store(123, &RateLimiterEntry{ // int key instead of string
-		lastAccess: time.Now().Add(-time.Hour),
-	})
-	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
-		lastAccess: time.Now().Add(-time.Hour),
-	})
+	r.PodRateLimiters.Store(123, newTestRateLimiterEntry(time.Now().Add(-time.Hour)))
+	r.PodRateLimiters.Store("default/valid-pod", newTestRateLimiterEntry(time.Now().Add(-time.Hour)))
 
 	// Run cleanup - should not panic
 	assert.NotPanics(t, func() {
@@ -227,9 +218,7 @@ func TestCleanupStaleLimiters_InvalidValueType(t *testing.T) {
 
 	// Add entries with invalid value types
 	r.PodRateLimiters.Store("default/invalid-value", "not-a-rate-limiter-entry") // string instead of *RateLimiterEntry
-	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
-		lastAccess: time.Now().Add(-time.Hour),
-	})
+	r.PodRateLimiters.Store("default/valid-pod", newTestRateLimiterEntry(time.Now().Add(-time.Hour)))
 
 	// Run cleanup - should not panic
 	assert.NotPanics(t, func() {
