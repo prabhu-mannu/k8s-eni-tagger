@@ -84,18 +84,28 @@ spec:
             - name: health
               containerPort: {{ .Values.health.port | default 8081 }}
               protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            failureThreshold: 30
+            periodSeconds: 10
+            # Gives up to 5 minutes for AWS connectivity validation at startup
+            # This runs ONCE to verify AWS API access and IAM permissions
           livenessProbe:
             httpGet:
               path: /healthz
               port: health
             initialDelaySeconds: 15
             periodSeconds: 20
+            # Simple ping to detect deadlocks, does not call AWS API
           readinessProbe:
             httpGet:
               path: /readyz
               port: health
             initialDelaySeconds: 5
             periodSeconds: 10
+            # Simple ping to check manager readiness, does not call AWS API
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- with .Values.extraVolumeMounts }}

@@ -9,7 +9,11 @@ import (
 	"strings"
 )
 
-// parseTags parses a JSON tag string into a map of key-value pairs.
+// parseTags parses tag annotations into a map of key-value pairs.
+// It supports two formats for better UX:
+//  1. JSON format (recommended): {"CostCenter":"1234","Team":"Platform"}
+//  2. Comma-separated format: CostCenter=1234,Team=Platform
+//
 // It validates each tag against AWS constraints:
 //   - Key length must not exceed MaxTagKeyLength (127 characters)
 //   - Value length must not exceed MaxTagValueLength (255 characters)
@@ -25,10 +29,36 @@ func parseTags(tagStr string) (map[string]string, error) {
 	}
 
 	var tags map[string]string
-	if err := json.Unmarshal([]byte(tagStr), &tags); err != nil {
-		return nil, fmt.Errorf("failed to parse tags: %w", err)
+
+	// Try JSON format first (most common for structured data)
+	if err := json.Unmarshal([]byte(tagStr), &tags); err == nil {
+		// JSON parse succeeded
+		return validateParsedTags(tags)
 	}
 
+	// Fallback to comma-separated format for better UX
+	tags = make(map[string]string)
+	pairs := strings.Split(tagStr, ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid tag format: %q (expected JSON or key=value,key=value)", pair)
+		}
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		if key == "" {
+			return nil, fmt.Errorf("empty tag key in: %q", pair)
+		}
+		tags[key] = value
+		tags[key] = value
+	}
+
+	return validateParsedTags(tags)
+}
+
+// validateParsedTags validates a map of tags against AWS constraints.
+// This is extracted from parseTags to allow reuse for both JSON and comma-separated formats.
+func validateParsedTags(tags map[string]string) (map[string]string, error) {
 	// Validate tags using same logic as validateTags
 	// Note: We duplicate some logic here or we could export validateTags logic.
 	// Since validateTags is in same package, we can just call it?

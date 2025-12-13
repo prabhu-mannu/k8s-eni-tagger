@@ -42,15 +42,30 @@ kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/downloa
 
 ## Usage Example
 
-Annotate your Pod with ENI tags:
+Annotate your Pod with ENI tags using either format:
 
+**Simple comma-separated format** (recommended for basic use):
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
   name: my-app
   annotations:
-    eni-tagger.io/tags: '{"CostCenter":"1234","Team":"Platform","Environment":"Production"}'
+    eni-tagger.io/tags: "CostCenter=1234,Team=Platform,Environment=Production"
+spec:
+  containers:
+    - name: nginx
+      image: nginx
+```
+
+**JSON format** (for complex values with special characters):
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+  annotations:
+    eni-tagger.io/tags: '{"CostCenter":"1234","Team":"Platform","Description":"App with = sign"}'
 spec:
   containers:
     - name: nginx
