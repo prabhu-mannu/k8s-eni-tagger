@@ -39,8 +39,8 @@ func (r *PodReconciler) parseAndCompareTags(ctx context.Context, pod *corev1.Pod
 	}
 
 	// Apply namespace prefix if configured
-	effectiveNamespace := r.TagNamespace
-	if effectiveNamespace == "" {
+	effectiveNamespace := ""
+	if r.TagNamespace == "enable" {
 		effectiveNamespace = pod.Namespace
 	}
 	currentTags, err = applyNamespace(currentTags, effectiveNamespace)

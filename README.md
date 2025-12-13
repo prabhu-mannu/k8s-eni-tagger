@@ -93,13 +93,13 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--aws-rate-limit-qps`        | `10`                 | AWS API rate limit (requests per second).                                    |
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
-| `--tag-namespace`             | `""` (pod namespace)  | Optional namespace prefix for tags (max 63 chars, e.g., `acme-corp:CostCenter`). If empty, uses pod's Kubernetes namespace. |
+| `--tag-namespace`             | `""` (disabled)      | Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value disables namespacing. |
 
 ---
 
 ## Enabling Namespace Tagging on Existing Deployments
 
-⚠️ **Important**: When enabling `--tag-namespace` on a running deployment, existing ENIs will be automatically updated to use namespaced tags.
+⚠️ **Important**: When enabling `--tag-namespace=enable` on a running deployment, existing ENIs will be automatically updated to use namespaced tags.
 
 ### Transition Behavior
 
@@ -112,7 +112,7 @@ eni-tagger.io/tags: '{"CostCenter":"123","Team":"Dev"}'
 CostCenter=123, Team=Dev
 ```
 
-**After enabling namespacing:**
+**After enabling namespacing** (`--tag-namespace=enable`):
 ```yaml
 # Same pod annotation
 eni-tagger.io/tags: '{"CostCenter":"123","Team":"Dev"}'
@@ -183,21 +183,22 @@ eni-tagger.io/tags: "cost_center=1234,TEAM=Platform,environment=Production"
 
 #### **Enterprise Multi-Tenant Scenarios**
 
-Use `--tag-namespace` to prevent conflicts in shared AWS Organizations:
+Use `--tag-namespace=enable` to automatically namespace tags with the pod's Kubernetes namespace, preventing conflicts in shared environments:
 
 ```yaml
-# Without namespace
+# Without namespacing (default)
 eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
 # Results in: CostCenter=1234, Team=Platform
 
-# With namespace (set via Helm: config.tagNamespace="acme-corp")
+# With namespacing enabled (--tag-namespace=enable)
 eni-tagger.io/tags: "CostCenter=1234,Team=Platform"
-# Results in: acme-corp:CostCenter=1234, acme-corp:Team=Platform
+# Results in: production:CostCenter=1234, production:Team=Platform
 ```
 
 **Benefits:**
-- Prevents conflicts during mergers/acquisitions
-- Clear ownership boundaries in multi-tenant environments
+- Automatic namespacing using Kubernetes namespaces
+- Prevents conflicts in multi-tenant environments
+- Clear ownership boundaries without manual configuration
 - Easier cost reporting per organization/department
 - Supports managed service providers (MSPs)
 

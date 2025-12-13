@@ -128,7 +128,8 @@ config:
   awsRateLimitBurst: 20
   # Pprof bind address (set to '0' to disable profiling)
   pprofBindAddress: "0"
-  # Tag namespace prefix for multi-tenant scenarios (e.g., 'acme-corp' becomes 'acme-corp:CostCenter')
+  # Tag namespacing control. Set to 'enable' to automatically prefix tags with pod's Kubernetes namespace.
+  # Any other value (including empty) disables namespacing.
   tagNamespace: ""
 
 # Extra environment variables (Map format for easier --set)

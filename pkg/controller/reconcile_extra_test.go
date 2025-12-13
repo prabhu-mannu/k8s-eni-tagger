@@ -129,6 +129,7 @@ func TestForeignTagsPreservation(t *testing.T) {
 		Recorder:      record.NewFakeRecorder(10),
 		AWSClient:     mockAWS,
 		AnnotationKey: AnnotationKey,
+		TagNamespace:  "enable",
 	}
 
 	// Run Reconcile
