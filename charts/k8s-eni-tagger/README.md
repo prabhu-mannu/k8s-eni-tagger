@@ -93,7 +93,6 @@ serviceAccount:
 ```
 
 ### EKS Security Group Binding (Security Groups for Pods)
-### EKS Security Group Binding (Security Groups for Pods)
 
 The chart supports EKS security groups for Pods via the `SecurityGroupPolicy` CRD. **Important:** The annotation `vpc.amazonaws.com/pod-eni` is NOT used for security group binding.
 

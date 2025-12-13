@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,37 +83,54 @@ func TestApplyNamespace(t *testing.T) {
 		tags      map[string]string
 		namespace string
 		expected  map[string]string
+		expectErr bool
 	}{
 		{
 			name:      "no namespace",
 			tags:      map[string]string{"CostCenter": "1234", "Team": "Platform"},
 			namespace: "",
 			expected:  map[string]string{"CostCenter": "1234", "Team": "Platform"},
+			expectErr: false,
 		},
 		{
 			name:      "with namespace",
 			tags:      map[string]string{"CostCenter": "1234", "Team": "Platform"},
 			namespace: "acme-corp",
 			expected:  map[string]string{"acme-corp:CostCenter": "1234", "acme-corp:Team": "Platform"},
+			expectErr: false,
 		},
 		{
 			name:      "empty tags with namespace",
 			tags:      map[string]string{},
 			namespace: "acme-corp",
 			expected:  map[string]string{},
+			expectErr: false,
 		},
 		{
 			name:      "namespace with special characters",
 			tags:      map[string]string{"Env": "prod"},
 			namespace: "example-inc",
 			expected:  map[string]string{"example-inc:Env": "prod"},
+			expectErr: false,
+		},
+		{
+			name:      "key too long after namespacing",
+			tags:      map[string]string{strings.Repeat("a", 120): "value"},
+			namespace: "long-namespace",
+			expected:  nil,
+			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := applyNamespace(tt.tags, tt.namespace)
-			assert.Equal(t, tt.expected, result)
+			result, err := applyNamespace(tt.tags, tt.namespace)
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
 		})
 	}
 }
