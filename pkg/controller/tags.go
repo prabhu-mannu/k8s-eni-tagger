@@ -105,17 +105,21 @@ func validateParsedTags(tags map[string]string) (map[string]string, error) {
 // For example, with namespace "acme-corp", the tag "CostCenter=1234" becomes "acme-corp:CostCenter=1234".
 // This is useful for enterprise multi-tenant scenarios to prevent tag key conflicts.
 // Returns the original tags if namespace is empty.
-func applyNamespace(tags map[string]string, namespace string) map[string]string {
+// Validates that resulting keys do not exceed MaxTagKeyLength.
+func applyNamespace(tags map[string]string, namespace string) (map[string]string, error) {
 	if namespace == "" {
-		return tags
+		return tags, nil
 	}
 
 	namespaced := make(map[string]string, len(tags))
 	for key, value := range tags {
 		namespacedKey := namespace + ":" + key
+		if len(namespacedKey) > MaxTagKeyLength {
+			return nil, fmt.Errorf("namespaced tag key too long: %q (length %d > %d)", namespacedKey, len(namespacedKey), MaxTagKeyLength)
+		}
 		namespaced[namespacedKey] = value
 	}
-	return namespaced
+	return namespaced, nil
 }
 
 // computeHash calculates a SHA-256 hash of the tag map for optimistic locking.

@@ -39,7 +39,10 @@ func (r *PodReconciler) parseAndCompareTags(ctx context.Context, pod *corev1.Pod
 	}
 
 	// Apply namespace prefix if configured
-	currentTags = applyNamespace(currentTags, r.TagNamespace)
+	currentTags, err = applyNamespace(currentTags, r.TagNamespace)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Parse last applied tags
 	lastAppliedTags := make(map[string]string)

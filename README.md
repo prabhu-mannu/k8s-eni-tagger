@@ -97,7 +97,7 @@ The controller will apply these tags to the Pod's ENI in AWS.
 
 ---
 
-## AWS Tagging Best PracticesBest Practices
+## AWS Tagging Best Practices
 
 ### Tag Naming Conventions
 

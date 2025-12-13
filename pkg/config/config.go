@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -91,6 +92,24 @@ func Load() (*Config, error) {
 	// Validate annotation key
 	if cfg.AnnotationKey == "" {
 		return nil, fmt.Errorf("annotation-key cannot be empty")
+	}
+
+	// Validate tag namespace
+	if cfg.TagNamespace != "" {
+		if strings.Contains(cfg.TagNamespace, ":") {
+			return nil, fmt.Errorf("tag-namespace cannot contain ':' character")
+		}
+		if strings.HasPrefix(cfg.TagNamespace, "aws:") || strings.HasPrefix(cfg.TagNamespace, "kubernetes.io/") {
+			return nil, fmt.Errorf("tag-namespace cannot use reserved prefixes 'aws:' or 'kubernetes.io/'")
+		}
+		// Check for invalid characters: only allow alphanumeric, spaces, + - = . _ /
+		if matched, _ := regexp.MatchString(`^[a-zA-Z0-9 +\-=._/]*$`, cfg.TagNamespace); !matched {
+			return nil, fmt.Errorf("tag-namespace contains invalid characters, only alphanumeric, spaces, and symbols + - = . _ / are allowed")
+		}
+		// Length check: ensure namespace itself is reasonable, < 100 to leave room for keys
+		if len(cfg.TagNamespace) > 100 {
+			return nil, fmt.Errorf("tag-namespace is too long, maximum 100 characters")
+		}
 	}
 
 	return cfg, nil
