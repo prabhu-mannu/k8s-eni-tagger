@@ -176,19 +176,20 @@ func main() {
 	}
 
 	podReconciler := &controller.PodReconciler{
-		Client:                mgr.GetClient(),
-		Scheme:                mgr.GetScheme(),
-		AWSClient:             awsClient,
-		ENICache:              eniCache,
-		Recorder:              mgr.GetEventRecorderFor("k8s-eni-tagger"),
-		AnnotationKey:         cfg.AnnotationKey,
-		DryRun:                cfg.DryRun,
-		SubnetIDs:             cfg.SubnetIDs,
-		AllowSharedENITagging: cfg.AllowSharedENITagging,
-		TagNamespace:          cfg.TagNamespace,
-		PodRateLimiters:       &sync.Map{},
-		PodRateLimitQPS:       cfg.PodRateLimitQPS,
-		PodRateLimitBurst:     cfg.PodRateLimitBurst,
+		Client:                      mgr.GetClient(),
+		Scheme:                      mgr.GetScheme(),
+		AWSClient:                   awsClient,
+		ENICache:                    eniCache,
+		Recorder:                    mgr.GetEventRecorderFor("k8s-eni-tagger"),
+		AnnotationKey:               cfg.AnnotationKey,
+		DryRun:                      cfg.DryRun,
+		SubnetIDs:                   cfg.SubnetIDs,
+		AllowSharedENITagging:       cfg.AllowSharedENITagging,
+		TagNamespace:                cfg.TagNamespace,
+		PodRateLimiters:             &sync.Map{},
+		PodRateLimitQPS:             cfg.PodRateLimitQPS,
+		PodRateLimitBurst:           cfg.PodRateLimitBurst,
+		RateLimiterCleanupThreshold: cfg.RateLimiterCleanupInterval * 5,
 	}
 
 	if err = podReconciler.SetupWithManager(mgr, cfg.MaxConcurrentReconciles); err != nil {

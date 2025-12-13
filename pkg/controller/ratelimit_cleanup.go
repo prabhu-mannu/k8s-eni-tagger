@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -47,8 +48,17 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 	removed := 0
 
 	r.PodRateLimiters.Range(func(key, value interface{}) bool {
-		podKey := key.(string)
-		entry := value.(*RateLimiterEntry)
+		podKey, ok := key.(string)
+		if !ok {
+			logger.Error(nil, "Invalid key type in rate limiter map", "key", key, "type", fmt.Sprintf("%T", key))
+			return true // continue processing other entries
+		}
+
+		entry, ok := value.(*RateLimiterEntry)
+		if !ok {
+			logger.Error(nil, "Invalid value type in rate limiter map", "key", podKey, "valueType", fmt.Sprintf("%T", value))
+			return true // continue processing other entries
+		}
 
 		if entry.LastAccess.Before(cutoff) {
 			r.PodRateLimiters.Delete(podKey)

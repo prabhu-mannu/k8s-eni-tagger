@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
+	"strings"
 
 	"k8s-eni-tagger/pkg/aws"
 
@@ -13,31 +13,9 @@ import (
 
 // retryUntagENI retries untag operations with exponential backoff and context cancellation support
 func (r *PodReconciler) retryUntagENI(ctx context.Context, eniID string, tags []string) error {
-	var uerr error
-	backoff := 100 * time.Millisecond
-	for i := 0; i < 3; i++ {
-		if err := r.AWSClient.UntagENI(ctx, eniID, tags); err != nil {
-			uerr = err
-			if i == 2 {
-				break
-			}
-			select {
-			case <-time.After(backoff):
-				// continue to next retry
-			case <-ctx.Done():
-				uerr = ctx.Err()
-				break
-			}
-			backoff *= 2
-			if ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-		uerr = nil
-		break
-	}
-	return uerr
+	return retryWithBackoff(ctx, maxUntagRetries, initialRetryBackoff, retryBackoffMultiplier, func() error {
+		return r.AWSClient.UntagENI(ctx, eniID, tags)
+	})
 }
 
 // getENIInfo retrieves ENI information for a given IP address.
@@ -74,7 +52,7 @@ func (r *PodReconciler) validateENI(ctx context.Context, eniInfo *aws.ENIInfo) e
 			}
 		}
 		if !allowed {
-			return fmt.Errorf("ENI %s subnet %s is not in allowed subnet list %v", eniInfo.ID, eniInfo.SubnetID, r.SubnetIDs)
+			return fmt.Errorf("ENI %s subnet %s is not in allowed subnet list [%s]", eniInfo.ID, eniInfo.SubnetID, strings.Join(r.SubnetIDs, ", "))
 		}
 	}
 
@@ -143,7 +121,7 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 
 		if len(diff.toRemove) > 0 {
 			if err := r.retryUntagENI(ctx, eniInfo.ID, diff.toRemove); err != nil {
-				return fmt.Errorf("failed to untag ENI %s after 3 attempts (removed %d tags): %w", eniInfo.ID, len(diff.toRemove), err)
+				return fmt.Errorf("failed to untag ENI %s after %d attempts (removed %d tags): %w", eniInfo.ID, maxUntagRetries, len(diff.toRemove), err)
 			}
 		}
 

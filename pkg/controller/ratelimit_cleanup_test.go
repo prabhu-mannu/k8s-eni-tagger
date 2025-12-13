@@ -111,3 +111,136 @@ func TestCleanupStaleLimiters_ListError(t *testing.T) {
 	// In real usage, List errors are handled gracefully in the function
 	t.Skip("Cannot easily test List errors with fake client")
 }
+
+func TestCleanupStaleLimiters_ThresholdBehavior(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := corev1.AddToScheme(scheme)
+	assert.NoError(t, err)
+
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		RateLimiterCleanupThreshold: 30 * time.Minute,
+	}
+
+	ctx := context.Background()
+
+	now := time.Now()
+	// Add limiters with different ages
+	r.PodRateLimiters.Store("default/recent-pod", &RateLimiterEntry{
+		LastAccess: now.Add(-10 * time.Minute), // Within threshold
+	})
+	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
+		LastAccess: now.Add(-45 * time.Minute), // Beyond threshold
+	})
+	r.PodRateLimiters.Store("default/just-inside-threshold", &RateLimiterEntry{
+		LastAccess: now.Add(-29 * time.Minute), // Just inside threshold
+	})
+
+	// Run cleanup
+	r.cleanupStaleLimiters(ctx)
+
+	// Verify only stale limiter was removed
+	_, exists := r.PodRateLimiters.Load("default/recent-pod")
+	assert.True(t, exists, "recent limiter should remain")
+
+	_, exists = r.PodRateLimiters.Load("default/stale-pod")
+	assert.False(t, exists, "stale limiter should be removed")
+
+	_, exists = r.PodRateLimiters.Load("default/just-inside-threshold")
+	assert.True(t, exists, "just-inside-threshold limiter should remain")
+}
+
+func TestCleanupStaleLimiters_Disabled(t *testing.T) {
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		RateLimiterCleanupThreshold: 0, // Disabled
+	}
+
+	ctx := context.Background()
+
+	// Add a stale limiter
+	r.PodRateLimiters.Store("default/stale-pod", &RateLimiterEntry{
+		LastAccess: time.Now().Add(-time.Hour),
+	})
+
+	// Run cleanup
+	r.cleanupStaleLimiters(ctx)
+
+	// Verify limiter was NOT removed
+	_, exists := r.PodRateLimiters.Load("default/stale-pod")
+	assert.True(t, exists, "limiter should not be removed when cleanup is disabled")
+}
+
+func TestCleanupStaleLimiters_InvalidKeyType(t *testing.T) {
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		RateLimiterCleanupThreshold: 30 * time.Minute,
+	}
+
+	ctx := context.Background()
+
+	// Add entries with invalid key types (this shouldn't happen in practice, but test safety)
+	r.PodRateLimiters.Store(123, &RateLimiterEntry{ // int key instead of string
+		LastAccess: time.Now().Add(-time.Hour),
+	})
+	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
+		LastAccess: time.Now().Add(-time.Hour),
+	})
+
+	// Run cleanup - should not panic
+	assert.NotPanics(t, func() {
+		r.cleanupStaleLimiters(ctx)
+	})
+
+	// Verify valid entry was still processed
+	_, exists := r.PodRateLimiters.Load("default/valid-pod")
+	assert.False(t, exists, "valid stale entry should be removed")
+
+	// Invalid entry should remain (since we can't process it)
+	_, exists = r.PodRateLimiters.Load(123)
+	assert.True(t, exists, "invalid key type entry should remain")
+}
+
+func TestCleanupStaleLimiters_EmptyMap(t *testing.T) {
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		RateLimiterCleanupThreshold: 30 * time.Minute,
+	}
+
+	ctx := context.Background()
+
+	// Run cleanup on empty map
+	assert.NotPanics(t, func() {
+		r.cleanupStaleLimiters(ctx)
+	})
+
+	// Should not panic or do anything
+}
+
+func TestCleanupStaleLimiters_InvalidValueType(t *testing.T) {
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		RateLimiterCleanupThreshold: 30 * time.Minute,
+	}
+
+	ctx := context.Background()
+
+	// Add entries with invalid value types
+	r.PodRateLimiters.Store("default/invalid-value", "not-a-rate-limiter-entry") // string instead of *RateLimiterEntry
+	r.PodRateLimiters.Store("default/valid-pod", &RateLimiterEntry{
+		LastAccess: time.Now().Add(-time.Hour),
+	})
+
+	// Run cleanup - should not panic
+	assert.NotPanics(t, func() {
+		r.cleanupStaleLimiters(ctx)
+	})
+
+	// Verify valid entry was still processed
+	_, exists := r.PodRateLimiters.Load("default/valid-pod")
+	assert.False(t, exists, "valid stale entry should be removed")
+
+	// Invalid entry should remain (since we can't process it)
+	_, exists = r.PodRateLimiters.Load("default/invalid-value")
+	assert.True(t, exists, "invalid value type entry should remain")
+}

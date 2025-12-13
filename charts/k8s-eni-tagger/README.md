@@ -180,8 +180,8 @@ config:
 | `config.watchNamespace` | Namespace to watch (empty = all) | `""` |
 | `config.maxConcurrentReconciles` | Concurrent reconciliation workers | `1` |
 | `config.dryRun` | Enable dry-run mode (no AWS changes) | `false` |
-| `config.metricsBindAddress` | Metrics endpoint bind port/address (bare port auto-prefixed) | `8090` |
-| `config.healthProbeBindAddress` | Health probe bind port/address (bare port auto-prefixed) | `8081` |
+| `config.metricsBindAddress` | Metrics endpoint bind port/address (bare port auto-prefixed with 0.0.0.0:) | `8090` |
+| `config.healthProbeBindAddress` | Health probe bind port/address (bare port auto-prefixed with 0.0.0.0:) | `8081` |
 | `config.subnetIDs` | Comma-separated allowed subnet IDs | `""` |
 | `config.allowSharedENITagging` | Allow tagging shared ENIs (WARNING) | `false` |
 | `config.enableENICache` | Enable in-memory ENI cache | `true` |

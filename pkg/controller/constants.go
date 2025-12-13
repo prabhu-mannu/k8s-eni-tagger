@@ -2,7 +2,11 @@
 // It watches Pod resources and applies tags to their associated ENIs based on annotations.
 package controller
 
-import "regexp"
+import (
+	"context"
+	"regexp"
+	"time"
+)
 
 const (
 	// AnnotationKey is the default annotation key that the controller watches for tag specifications.
@@ -36,7 +40,47 @@ const (
 
 	// MaxTagsPerENI is the maximum number of tags allowed per ENI by AWS (50 tags).
 	MaxTagsPerENI = 50
+
+	// Retry configuration for untag operations
+	// These constants define the exponential backoff retry strategy for AWS untag operations.
+
+	// maxUntagRetries is the maximum number of retry attempts for untag operations.
+	maxUntagRetries = 3
+
+	// initialRetryBackoff is the initial backoff duration before the first retry.
+	initialRetryBackoff = 100 * time.Millisecond
+
+	// retryBackoffMultiplier is the factor by which the backoff duration increases after each retry.
+	retryBackoffMultiplier = 2
 )
+
+// retryWithBackoff executes a function with exponential backoff retry logic.
+// It retries up to maxRetries times with context-aware cancellation support.
+func retryWithBackoff(ctx context.Context, maxRetries int, initialBackoff time.Duration, backoffMultiplier int, operation func() error) error {
+	var lastErr error
+	backoff := initialBackoff
+retryLoop:
+	for i := 0; i < maxRetries; i++ {
+		if err := operation(); err != nil {
+			lastErr = err
+			if i == maxRetries-1 {
+				break
+			}
+			select {
+			case <-time.After(backoff):
+				// continue to next retry
+			case <-ctx.Done():
+				lastErr = ctx.Err()
+				break retryLoop
+			}
+			backoff *= time.Duration(backoffMultiplier)
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	return lastErr
+}
 
 // Logging key constants for consistent structured logging
 const (

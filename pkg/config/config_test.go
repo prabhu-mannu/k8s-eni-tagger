@@ -20,8 +20,8 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if cfg.MetricsBindAddress != ":8090" {
-		t.Errorf("Expected default metrics bind address :8090, got %s", cfg.MetricsBindAddress)
+	if cfg.MetricsBindAddress != "0.0.0.0:8090" {
+		t.Errorf("Expected default metrics bind address 0.0.0.0:8090, got %s", cfg.MetricsBindAddress)
 	}
 	if cfg.AWSRateLimitQPS != 10 {
 		t.Errorf("Expected default QPS 10, got %f", cfg.AWSRateLimitQPS)

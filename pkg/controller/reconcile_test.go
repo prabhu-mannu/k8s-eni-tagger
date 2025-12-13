@@ -407,3 +407,63 @@ func TestReconcile(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcileRateLimiting(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	// Create a pod with valid annotation and finalizer already added
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-rate-limit",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationKey: `{"cost-center":"123","team":"platform"}`,
+			},
+			Finalizers: []string{finalizerName},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.0.0.1",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	mockAWS := &MockAWSClient{}
+
+	r := &PodReconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   0.1, // Very low QPS for testing
+		PodRateLimitBurst: 1,
+		Recorder:          record.NewFakeRecorder(10),
+	}
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+		},
+	}
+
+	// First reconcile should succeed (within rate limit)
+	mockAWS.On("GetENIInfoByIP", mock.Anything, "10.0.0.1").Return(&aws.ENIInfo{
+		ID: "eni-rate-limit",
+	}, nil).Once()
+	mockAWS.On("TagENI", mock.Anything, "eni-rate-limit", mock.Anything).Return(nil).Once()
+
+	res1, err1 := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err1)
+	assert.Zero(t, res1.RequeueAfter) // Should not requeue
+
+	// Second reconcile immediately after should be rate limited
+	res2, err2 := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err2)
+	assert.NotZero(t, res2.RequeueAfter) // Should requeue due to rate limiting
+
+	// Verify that AWS calls were only made once (first reconcile)
+	mockAWS.AssertExpectations(t)
+}

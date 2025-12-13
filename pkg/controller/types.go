@@ -7,6 +7,7 @@ import (
 	"k8s-eni-tagger/pkg/aws"
 	enicache "k8s-eni-tagger/pkg/cache"
 
+	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -14,7 +15,7 @@ import (
 
 // RateLimiterEntry holds a rate limiter with its last access timestamp
 type RateLimiterEntry struct {
-	Limiter    interface{} // The actual rate limiter
+	Limiter    *rate.Limiter // The actual rate limiter
 	LastAccess time.Time
 }
 

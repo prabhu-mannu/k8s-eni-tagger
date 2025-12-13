@@ -85,33 +85,35 @@ func newRateLimiter(qps float64, burst int) *rateLimiter {
 }
 
 func (r *rateLimiter) Wait(ctx context.Context) error {
-	// Acquire lock and refill tokens
-	r.mu.Lock()
-	now := time.Now()
-	elapsed := now.Sub(r.lastRefill).Seconds()
-	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
-	r.lastRefill = now
-
-	if r.tokens >= 1 {
-		r.tokens--
-		r.mu.Unlock()
-		return nil
-	}
-
-	// Calculate wait time for next token and release lock while waiting
-	waitTime := time.Duration((1-r.tokens)/r.refillRate*1000) * time.Millisecond
-	r.mu.Unlock()
-
-	select {
-	case <-ctx.Done():
-		// Context canceled while waiting
-		return ctx.Err()
-	case <-time.After(waitTime):
-		// After waiting, claim token (reset to 0 to avoid fractional issues)
+	for {
+		// Acquire lock and refill tokens
 		r.mu.Lock()
-		r.tokens = 0
+		now := time.Now()
+		elapsed := now.Sub(r.lastRefill).Seconds()
+		r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
+		r.lastRefill = now
+
+		if r.tokens >= 1 {
+			r.tokens--
+			r.mu.Unlock()
+			return nil
+		}
+
+		// Calculate wait time for next token and release lock while waiting
+		// Ensure tokens is non-negative for accurate wait calculation
+		tokensNeeded := 1.0 - max(0, r.tokens)
+		waitTime := time.Duration(tokensNeeded/r.refillRate*1000) * time.Millisecond
 		r.mu.Unlock()
-		return nil
+
+		select {
+		case <-ctx.Done():
+			// Context canceled while waiting
+			return ctx.Err()
+		case <-time.After(waitTime):
+			// Loop back to try acquiring a token again with updated state
+			// This handles the case where another goroutine consumed tokens during our wait
+			continue
+		}
 	}
 }
 

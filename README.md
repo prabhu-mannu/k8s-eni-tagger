@@ -84,8 +84,8 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--watch-namespace`           | `""` (all)           | Namespace to watch. If empty, watches all.                                   |
 | `--max-concurrent-reconciles` | `1`                  | Number of concurrent worker threads.                                         |
 | `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).                                        |
-| `--metrics-bind-address`      | `8090`               | Port or address for Prometheus metrics. Bare ports are auto-prefixed with `:`. |
-| `--health-probe-bind-address` | `8081`               | Port or address for health probes. Bare ports are auto-prefixed with `:`.    |
+| `--metrics-bind-address`      | `8090`               | Port or address for Prometheus metrics. Bare ports are auto-prefixed with `0.0.0.0:`. |
+| `--health-probe-bind-address` | `8081`               | Port or address for health probes. Bare ports are auto-prefixed with `0.0.0.0:`.    |
 | `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs.                                  |
 | `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs.                                                |
 | `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching.                                                |

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -27,11 +28,19 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 				LastAccess: now,
 			},
 		)
-		entry := limiterInterface.(*RateLimiterEntry)
+		entry, ok := limiterInterface.(*RateLimiterEntry)
+		if !ok {
+			// This should not happen, but handle gracefully to avoid panic
+			logger.Error(nil, "Invalid rate limiter entry type, recreating", "key", req.String(), "type", fmt.Sprintf("%T", limiterInterface))
+			entry = &RateLimiterEntry{
+				Limiter:    rate.NewLimiter(rate.Limit(r.PodRateLimitQPS), r.PodRateLimitBurst),
+				LastAccess: now,
+			}
+			r.PodRateLimiters.Store(req.String(), entry)
+		}
 		entry.LastAccess = now // Update last access time
-		limiter := entry.Limiter.(*rate.Limiter)
 
-		if !limiter.Allow() {
+		if !entry.Limiter.Allow() {
 			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
 			logger.V(1).Info("Rate limited, skipping reconciliation", LogKeyRequeueAfter, requeueAfter)
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
