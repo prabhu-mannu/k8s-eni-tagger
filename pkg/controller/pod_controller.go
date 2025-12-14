@@ -20,34 +20,34 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// Check per-pod rate limit (if enabled)
 	if r.PodRateLimitQPS > 0 {
 		now := time.Now()
-		limiterInterface, _ := r.PodRateLimiters.LoadOrStore(
+		limiterInterface, loaded := r.PodRateLimiters.LoadOrStore(
 			req.String(),
-			func() *RateLimiterEntry {
+			func() interface{} {
 				entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
 				if err != nil {
-					logger.Error(err, "Failed to create rate limiter entry")
-					return nil
+					logger.Error(err, "Failed to create rate limiter entry, skipping rate limiting for this pod", "pod", req.String())
+					return nil // Don't store anything for failed entries
 				}
 				return entry
 			}(),
 		)
-		entry, ok := limiterInterface.(*RateLimiterEntry)
-		if !ok || entry == nil {
-			// This should not happen, but handle gracefully to avoid panic
-			logger.Error(nil, "Invalid rate limiter entry type, recreating", "key", req.String(), "type", fmt.Sprintf("%T", limiterInterface))
-			entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
-			if err != nil {
-				logger.Error(err, "Failed to recreate rate limiter entry")
-				return ctrl.Result{}, err
-			}
-			r.PodRateLimiters.Store(req.String(), entry)
-		}
-		entry.UpdateLastAccess(now)
 
-		if !entry.Allow() {
-			requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
-			logger.V(1).Info("Rate limited, skipping reconciliation", LogKeyRequeueAfter, requeueAfter)
-			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		// If we just stored a nil (creation failed), skip rate limiting
+		if !loaded && limiterInterface == nil {
+			logger.V(1).Info("Skipping rate limiting due to creation failure", "pod", req.String())
+		} else {
+			entry, ok := limiterInterface.(*RateLimiterEntry)
+			if !ok || entry == nil {
+				logger.Error(nil, "Invalid rate limiter entry type, skipping rate limiting", "key", req.String(), "type", fmt.Sprintf("%T", limiterInterface))
+			} else {
+				entry.UpdateLastAccess(now)
+
+				if !entry.Allow() {
+					requeueAfter := time.Duration(1.0/r.PodRateLimitQPS) * time.Second
+					logger.V(1).Info("Rate limited, skipping reconciliation", LogKeyRequeueAfter, requeueAfter)
+					return ctrl.Result{RequeueAfter: requeueAfter}, nil
+				}
+			}
 		}
 	}
 

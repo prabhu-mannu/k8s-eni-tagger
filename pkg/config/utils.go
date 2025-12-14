@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -10,17 +11,20 @@ import (
 // - bare ports like "8081" become "0.0.0.0:8081"
 // - values containing ":" are returned unchanged (covers host:port, IPv6, etc.)
 // - empty strings stay empty
-func normalizeBindAddress(value string) string {
+func normalizeBindAddress(value string) (string, error) {
 	v := strings.TrimSpace(value)
 	if v == "" || v == "0" {
-		return v
+		return v, nil
 	}
 	if strings.Contains(v, ":") {
-		return v
+		return v, nil
 	}
 	port, err := strconv.Atoi(v)
-	if err == nil && port >= 1 && port <= 65535 {
-		return "0.0.0.0:" + v
+	if err != nil {
+		return "", fmt.Errorf("invalid port number '%s': %w", v, err)
 	}
-	return v
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("port number %d out of valid range 1-65535", port)
+	}
+	return "0.0.0.0:" + v, nil
 }

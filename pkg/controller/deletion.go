@@ -72,7 +72,9 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, pod *corev1.Pod) 
 
 	if lastAppliedValue != "" && pod.Status.PodIP != "" {
 		var lastAppliedTags map[string]string
-		if err := json.Unmarshal([]byte(lastAppliedValue), &lastAppliedTags); err == nil {
+		if err := json.Unmarshal([]byte(lastAppliedValue), &lastAppliedTags); err != nil {
+			logger.Error(err, "Failed to unmarshal last-applied-tags annotation, skipping cleanup", "annotation", LastAppliedAnnotationKey)
+		} else {
 			if len(lastAppliedTags) > 0 {
 				eniInfo, err := r.AWSClient.GetENIInfoByIP(ctx, pod.Status.PodIP)
 				if err != nil {

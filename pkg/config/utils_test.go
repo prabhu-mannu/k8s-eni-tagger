@@ -10,9 +10,10 @@ func TestNormalizeBindAddress(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name        string
+		input       string
+		want        string
+		expectError bool
 	}{
 		{
 			name:  "empty",
@@ -55,9 +56,9 @@ func TestNormalizeBindAddress(t *testing.T) {
 			want:  "fe80::1",
 		},
 		{
-			name:  "invalid numeric",
-			input: "8081abc",
-			want:  "8081abc",
+			name:        "invalid numeric",
+			input:       "8081abc",
+			expectError: true,
 		},
 		{
 			name:  "port 1",
@@ -70,19 +71,19 @@ func TestNormalizeBindAddress(t *testing.T) {
 			want:  "0.0.0.0:65535",
 		},
 		{
-			name:  "port 65536 invalid",
-			input: "65536",
-			want:  "65536",
+			name:        "port 65536 invalid",
+			input:       "65536",
+			expectError: true,
 		},
 		{
-			name:  "port 99999 invalid",
-			input: "99999",
-			want:  "99999",
+			name:        "port 99999 invalid",
+			input:       "99999",
+			expectError: true,
 		},
 		{
-			name:  "negative port",
-			input: "-1",
-			want:  "-1",
+			name:        "negative port",
+			input:       "-1",
+			expectError: true,
 		},
 		{
 			name:  "localhost with port",
@@ -100,14 +101,14 @@ func TestNormalizeBindAddress(t *testing.T) {
 			want:  "127.0.0.1:8080",
 		},
 		{
-			name:  "non-numeric string",
-			input: "abc",
-			want:  "abc",
+			name:        "non-numeric string",
+			input:       "abc",
+			expectError: true,
 		},
 		{
-			name:  "port too large",
-			input: "999999",
-			want:  "999999",
+			name:        "port too large",
+			input:       "999999",
+			expectError: true,
 		},
 		{
 			name:  "port with leading zeros",
@@ -130,8 +131,13 @@ func TestNormalizeBindAddress(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := normalizeBindAddress(tt.input)
-			require.Equal(t, tt.want, got)
+			got, err := normalizeBindAddress(tt.input)
+			if tt.expectError {
+				require.Error(t, err, "expected error for input %q", tt.input)
+			} else {
+				require.NoError(t, err, "unexpected error for input %q", tt.input)
+				require.Equal(t, tt.want, got)
+			}
 		})
 	}
 }

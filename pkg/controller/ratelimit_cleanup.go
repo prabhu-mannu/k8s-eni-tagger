@@ -13,6 +13,8 @@ import (
 // This prevents memory leaks from deleted pods whose rate limiters remain in the map.
 func (r *PodReconciler) StartRateLimiterCleanup(ctx context.Context, interval time.Duration) {
 	if interval <= 0 || r.PodRateLimitQPS <= 0 {
+		log.FromContext(ctx).Info("Rate limiter cleanup disabled",
+			"interval", interval, "podRateLimitQPS", r.PodRateLimitQPS)
 		return // Cleanup disabled
 	}
 
@@ -57,7 +59,8 @@ func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
 
 		entry, ok := value.(*RateLimiterEntry)
 		if !ok {
-			logger.Error(nil, "Invalid value type in rate limiter map, removing entry", "key", podKey, "valueType", fmt.Sprintf("%T", value))
+			logger.Error(nil, "Rate limiter map corruption detected: invalid value type, expected *RateLimiterEntry",
+				"key", podKey, "actualType", fmt.Sprintf("%T", value), "actualValue", value)
 			r.PodRateLimiters.Delete(podKey)
 			removed++
 			return true // continue processing other entries

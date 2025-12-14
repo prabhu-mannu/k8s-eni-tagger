@@ -84,9 +84,19 @@ func Load() (*Config, error) {
 	}
 
 	// Normalize bind addresses
-	cfg.MetricsBindAddress = normalizeBindAddress(cfg.MetricsBindAddress)
-	cfg.HealthProbeBindAddress = normalizeBindAddress(cfg.HealthProbeBindAddress)
-	cfg.PprofBindAddress = normalizeBindAddress(cfg.PprofBindAddress)
+	var err error
+	cfg.MetricsBindAddress, err = normalizeBindAddress(cfg.MetricsBindAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid metrics bind address: %w", err)
+	}
+	cfg.HealthProbeBindAddress, err = normalizeBindAddress(cfg.HealthProbeBindAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid health probe bind address: %w", err)
+	}
+	cfg.PprofBindAddress, err = normalizeBindAddress(cfg.PprofBindAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pprof bind address: %w", err)
+	}
 
 	// Validate annotation key
 	if cfg.AnnotationKey == "" {

@@ -56,18 +56,28 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	for ip, data := range cm.Data {
 		var info aws.ENIInfo
 		if err := json.Unmarshal([]byte(data), &info); err != nil {
-			logger.Error(err, "Failed to unmarshal ENI info, skipping entry", "ip", ip, "data", data)
+			logger.Error(err, "Failed to unmarshal ENI info, entry corrupted - will clean up", "ip", ip, "data", data)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
 		result[ip] = &info
 	}
 
+	// Clean up corrupted entries asynchronously to avoid blocking cache loading
 	if len(skippedEntries) > 0 {
-		logger.Error(nil, "ConfigMap cache corruption detected",
-			"skippedEntries", len(skippedEntries),
-			"totalEntries", len(cm.Data),
-			"ips", skippedEntries)
+		logger.Info("ConfigMap cache corruption detected, cleaning up corrupted entries",
+			"corruptedEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
+		
+		// Clean up corrupted entries in background to avoid blocking
+		go func(ctx context.Context, entries []string) {
+			for _, ip := range entries {
+				if err := p.Delete(ctx, ip); err != nil {
+					logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
+				} else {
+					logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
+				}
+			}
+		}(ctx, skippedEntries)
 	}
 
 	return result, nil

@@ -75,7 +75,8 @@ func TestLoad(t *testing.T) {
 					},
 				},
 			},
-			expectedItems: map[string]*aws.ENIInfo{}, // Should skip invalid
+			expectedError: "", // No error - corruption is handled gracefully
+			expectedItems: map[string]*aws.ENIInfo{}, // No valid items
 		},
 	}
 

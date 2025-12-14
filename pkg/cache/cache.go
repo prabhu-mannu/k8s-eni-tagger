@@ -8,6 +8,7 @@ import (
 	"k8s-eni-tagger/pkg/aws"
 	"k8s-eni-tagger/pkg/metrics"
 
+	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -155,16 +156,17 @@ func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo) {
 
 // Invalidate removes an entry from the cache (called on pod deletion)
 func (c *ENICache) Invalidate(ctx context.Context, ip string) {
+	logger := log.FromContext(ctx)
+
 	c.mu.Lock()
 	delete(c.cache, ip)
 	c.mu.Unlock()
 
 	if c.cmPersister != nil {
 		if err := c.cmPersister.Delete(ctx, ip); err != nil {
-			log.Log.Error(err, "Failed to delete from ConfigMap", "ip", ip)
+			logger.Error(err, "Failed to delete ENI from ConfigMap, cache may grow unbounded", "ip", ip)
 		}
 	}
-
 }
 
 func (c *ENICache) ensureWorker() {
@@ -175,6 +177,8 @@ func (c *ENICache) ensureWorker() {
 
 // configMapWorker batches and rate-limits ConfigMap updates
 func (c *ENICache) configMapWorker() {
+	logger := log.Log.WithName("eni-cache-worker")
+	
 	// Copy batching config under lock to avoid race conditions
 	c.mu.RLock()
 	batchSize := c.batchSize
@@ -191,12 +195,12 @@ func (c *ENICache) configMapWorker() {
 		case upd := <-c.updateQueue:
 			batch = append(batch, upd)
 			if len(batch) >= c.batchSize {
-				c.flushBatch(batch)
+				c.flushBatch(batch, logger)
 				batch = batch[:0]
 			}
 		case <-ticker.C:
 			if len(batch) > 0 {
-				c.flushBatch(batch)
+				c.flushBatch(batch, logger)
 				batch = batch[:0]
 			}
 		}
@@ -204,14 +208,19 @@ func (c *ENICache) configMapWorker() {
 }
 
 // flushBatch applies a batch of updates to the ConfigMap
-func (c *ENICache) flushBatch(batch []cacheUpdate) {
+func (c *ENICache) flushBatch(batch []cacheUpdate, logger logr.Logger) {
 	if c.cmPersister == nil || len(batch) == 0 {
 		return
 	}
+
+	// Use timeout context to prevent hanging during shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Apply sets
 	for _, upd := range batch {
-		if err := c.cmPersister.Save(context.Background(), upd.ip, upd.info); err != nil {
-			log.Log.Error(err, "Batch persist ENI to ConfigMap", "ip", upd.ip)
+		if err := c.cmPersister.Save(ctx, upd.ip, upd.info); err != nil {
+			logger.Error(err, "Batch persist ENI to ConfigMap failed", "ip", upd.ip)
 		}
 	}
 }
