@@ -178,7 +178,7 @@ func (c *ENICache) ensureWorker() {
 // configMapWorker batches and rate-limits ConfigMap updates
 func (c *ENICache) configMapWorker() {
 	logger := log.Log.WithName("eni-cache-worker")
-	
+
 	// Copy batching config under lock to avoid race conditions
 	c.mu.RLock()
 	batchSize := c.batchSize

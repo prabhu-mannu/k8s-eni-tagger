@@ -20,22 +20,23 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// Check per-pod rate limit (if enabled)
 	if r.PodRateLimitQPS > 0 {
 		now := time.Now()
-		limiterInterface, loaded := r.PodRateLimiters.LoadOrStore(
-			req.String(),
-			func() interface{} {
-				entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
-				if err != nil {
-					logger.Error(err, "Failed to create rate limiter entry, skipping rate limiting for this pod", "pod", req.String())
-					return nil // Don't store anything for failed entries
-				}
-				return entry
-			}(),
-		)
+		key := req.String()
 
-		// If we just stored a nil (creation failed), skip rate limiting
-		if !loaded && limiterInterface == nil {
-			logger.V(1).Info("Skipping rate limiting due to creation failure", "pod", req.String())
-		} else {
+		// First try to load existing entry
+		limiterInterface, loaded := r.PodRateLimiters.Load(key)
+		if !loaded {
+			// Only create new entry if none exists
+			entry, err := NewRateLimiterEntry(r.PodRateLimitQPS, r.PodRateLimitBurst)
+			if err != nil {
+				logger.Error(err, "Failed to create rate limiter entry, skipping rate limiting for this pod", "pod", key)
+			} else {
+				// Try to store, but another goroutine might have stored one already
+				limiterInterface, loaded = r.PodRateLimiters.LoadOrStore(key, entry)
+			}
+		}
+
+		// If we have a valid entry, check rate limit
+		if limiterInterface != nil {
 			entry, ok := limiterInterface.(*RateLimiterEntry)
 			if !ok || entry == nil {
 				logger.Error(nil, "Invalid rate limiter entry type, skipping rate limiting", "key", req.String(), "type", fmt.Sprintf("%T", limiterInterface))

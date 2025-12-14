@@ -43,6 +43,120 @@ type Client interface {
 	GetEC2Client() *ec2.Client
 }
 
+// AWSErrorCategory represents different categories of AWS errors
+type AWSErrorCategory int
+
+const (
+	// AWSErrorUnknown - Unrecognized error
+	AWSErrorUnknown AWSErrorCategory = iota
+	// AWSErrorNotFound - Resource not found (permanent)
+	AWSErrorNotFound
+	// AWSErrorPermission - Permission/authorization error (permanent)
+	AWSErrorPermission
+	// AWSErrorRateLimit - Rate limiting/throttling (transient, retry)
+	AWSErrorRateLimit
+	// AWSErrorTemporary - Temporary/transient error (retry)
+	AWSErrorTemporary
+	// AWSErrorInvalidInput - Invalid input parameters (permanent)
+	AWSErrorInvalidInput
+)
+
+// AWSErrorInfo contains categorized error information
+type AWSErrorInfo struct {
+	Category    AWSErrorCategory
+	ErrorCode   string
+	Message     string
+	IsRetryable bool
+}
+
+// categorizeAWSError analyzes an AWS error and returns categorized information
+func categorizeAWSError(err error) AWSErrorInfo {
+	if err == nil {
+		return AWSErrorInfo{Category: AWSErrorUnknown, IsRetryable: false}
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return AWSErrorInfo{
+			Category:    AWSErrorUnknown,
+			Message:     err.Error(),
+			IsRetryable: false, // Unknown errors are not retryable by default
+		}
+	}
+
+	errorCode := apiErr.ErrorCode()
+	message := apiErr.Error()
+
+	// Categorize based on error code
+	switch errorCode {
+	// Not found errors (permanent)
+	case "InvalidNetworkInterfaceID.NotFound", "InvalidSubnetID.NotFound", "InvalidVpcID.NotFound":
+		return AWSErrorInfo{
+			Category:    AWSErrorNotFound,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Permission errors (permanent)
+	case "UnauthorizedOperation", "AccessDenied", "Forbidden":
+		return AWSErrorInfo{
+			Category:    AWSErrorPermission,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Rate limiting errors (transient, retry)
+	case "RequestLimitExceeded", "ThrottlingException", "Throttling", "TooManyRequestsException":
+		return AWSErrorInfo{
+			Category:    AWSErrorRateLimit,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: true,
+		}
+
+	// Invalid input errors (permanent)
+	case "InvalidParameterValue", "InvalidParameterCombination", "ValidationException":
+		return AWSErrorInfo{
+			Category:    AWSErrorInvalidInput,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Temporary/transient errors (retry)
+	case "InternalError", "ServiceUnavailable", "InternalFailure", "Unavailable":
+		return AWSErrorInfo{
+			Category:    AWSErrorTemporary,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: true,
+		}
+
+	default:
+		// Check for rate limiting patterns in error message
+		if strings.Contains(strings.ToLower(message), "rate limit") ||
+			strings.Contains(strings.ToLower(message), "throttl") ||
+			strings.Contains(strings.ToLower(message), "too many requests") {
+			return AWSErrorInfo{
+				Category:    AWSErrorRateLimit,
+				ErrorCode:   errorCode,
+				Message:     message,
+				IsRetryable: true,
+			}
+		}
+
+		// Default to unknown
+		return AWSErrorInfo{
+			Category:    AWSErrorUnknown,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false, // Conservative default
+		}
+	}
+}
+
 // RateLimitConfig configures rate limiting for AWS API calls
 type RateLimitConfig struct {
 	// QPS is the maximum queries per second

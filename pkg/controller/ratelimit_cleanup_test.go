@@ -233,3 +233,49 @@ func TestCleanupStaleLimiters_InvalidValueType(t *testing.T) {
 	_, exists = r.PodRateLimiters.Load("default/invalid-value")
 	assert.False(t, exists, "invalid value type entry should be removed")
 }
+
+func TestCleanupIntegration(t *testing.T) {
+	r := &PodReconciler{
+		PodRateLimiters:             &sync.Map{},
+		PodRateLimitQPS:             0.1,                    // Enable rate limiting
+		RateLimiterCleanupThreshold: time.Millisecond * 200, // Longer threshold for testing
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+
+	// Start the cleanup with a short interval
+	r.StartRateLimiterCleanup(ctx, time.Millisecond*10)
+
+	// Add some entries
+	r.PodRateLimiters.Store("default/fresh-pod", newTestRateLimiterEntry(time.Now()))
+	r.PodRateLimiters.Store("default/stale-pod-1", newTestRateLimiterEntry(time.Now().Add(-time.Millisecond*300)))
+	r.PodRateLimiters.Store("default/stale-pod-2", newTestRateLimiterEntry(time.Now().Add(-time.Millisecond*400)))
+
+	// Wait for cleanup to run multiple times
+	time.Sleep(time.Millisecond * 500)
+
+	// Verify stale entries were removed
+	_, exists := r.PodRateLimiters.Load("default/stale-pod-1")
+	assert.False(t, exists, "stale entry 1 should be removed")
+
+	_, exists = r.PodRateLimiters.Load("default/stale-pod-2")
+	assert.False(t, exists, "stale entry 2 should be removed")
+
+	// Add a fresh entry after cleanup
+	r.PodRateLimiters.Store("default/fresh-pod", newTestRateLimiterEntry(time.Now()))
+
+	// Wait a bit (less than threshold)
+	time.Sleep(time.Millisecond * 50)
+
+	// Verify fresh entry remains
+	_, exists = r.PodRateLimiters.Load("default/fresh-pod")
+	assert.True(t, exists, "fresh entry should remain")
+
+	// Add a new stale entry and verify it's cleaned up
+	r.PodRateLimiters.Store("default/new-stale-pod", newTestRateLimiterEntry(time.Now().Add(-time.Millisecond*300)))
+	time.Sleep(time.Millisecond * 200)
+
+	_, exists = r.PodRateLimiters.Load("default/new-stale-pod")
+	assert.False(t, exists, "newly added stale entry should be removed")
+}

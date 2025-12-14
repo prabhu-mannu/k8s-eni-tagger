@@ -60,6 +60,12 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
+		// Validate that required fields are present
+		if info.ID == "" {
+			logger.Error(nil, "ENI info missing required ID field, entry corrupted - will clean up", "ip", ip, "data", data)
+			skippedEntries = append(skippedEntries, ip)
+			continue
+		}
 		result[ip] = &info
 	}
 
@@ -67,17 +73,18 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	if len(skippedEntries) > 0 {
 		logger.Info("ConfigMap cache corruption detected, cleaning up corrupted entries",
 			"corruptedEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
-		
+
 		// Clean up corrupted entries in background to avoid blocking
-		go func(ctx context.Context, entries []string) {
+		// Use context.Background() since this is best-effort cleanup that should complete even if parent context is canceled
+		go func(cleanupCtx context.Context, entries []string) {
 			for _, ip := range entries {
-				if err := p.Delete(ctx, ip); err != nil {
+				if err := p.Delete(cleanupCtx, ip); err != nil {
 					logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
 				} else {
 					logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
 				}
 			}
-		}(ctx, skippedEntries)
+		}(context.Background(), skippedEntries)
 	}
 
 	return result, nil

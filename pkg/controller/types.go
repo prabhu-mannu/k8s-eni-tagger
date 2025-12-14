@@ -62,12 +62,127 @@ func (e *RateLimiterEntry) GetLastAccess() time.Time {
 
 // Allow checks if the rate limiter allows the request
 func (e *RateLimiterEntry) Allow() bool {
+	if e.limiter == nil {
+		return true // Allow if limiter is nil (for testing or error cases)
+	}
 	return e.limiter.Allow()
+}
+
+// AllowAndUpdate atomically checks if the request is allowed and updates last access time
+// Returns true if the request is allowed, false if rate limited
+func (e *RateLimiterEntry) AllowAndUpdate() bool {
+	if e.limiter == nil {
+		e.UpdateLastAccess(time.Now())
+		return true // Allow if limiter is nil (for testing or error cases)
+	}
+	allowed := e.limiter.Allow()
+	if allowed {
+		e.UpdateLastAccess(time.Now())
+	}
+	return allowed
 }
 
 // IsStaleAfter checks if the entry has been stale for longer than the given threshold
 func (e *RateLimiterEntry) IsStaleAfter(threshold time.Duration) bool {
 	return time.Since(e.GetLastAccess()) > threshold
+}
+
+// RateLimiterPool provides a type-safe wrapper around sync.Map for RateLimiterEntry storage
+type RateLimiterPool struct {
+	mu    sync.RWMutex
+	pool  *sync.Map // map[string]*RateLimiterEntry
+	qps   float64
+	burst int
+}
+
+// NewRateLimiterPool creates a new RateLimiterPool with the given configuration
+func NewRateLimiterPool(qps float64, burst int) (*RateLimiterPool, error) {
+	if qps <= 0 {
+		return nil, fmt.Errorf("qps must be positive")
+	}
+	if burst < 1 {
+		return nil, fmt.Errorf("burst must be at least 1")
+	}
+
+	return &RateLimiterPool{
+		pool:  &sync.Map{},
+		qps:   qps,
+		burst: burst,
+	}, nil
+}
+
+// GetOrCreate returns an existing rate limiter for the key, or creates a new one
+// Returns the rate limiter entry and whether it was newly created
+func (p *RateLimiterPool) GetOrCreate(key string) (*RateLimiterEntry, bool, error) {
+	// Try to get existing entry
+	if entryInterface, exists := p.pool.Load(key); exists {
+		if entry, ok := entryInterface.(*RateLimiterEntry); ok && entry != nil {
+			return entry, false, nil
+		}
+		// Invalid entry found, remove it
+		p.pool.Delete(key)
+	}
+
+	// Create new entry
+	entry, err := NewRateLimiterEntry(p.qps, p.burst)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to create rate limiter entry: %w", err)
+	}
+
+	// Store the new entry (may race with other goroutines, but that's ok)
+	actual, loaded := p.pool.LoadOrStore(key, entry)
+	if loaded {
+		// Another goroutine created it first, return that one
+		if actualEntry, ok := actual.(*RateLimiterEntry); ok && actualEntry != nil {
+			return actualEntry, false, nil
+		}
+		// Invalid entry, replace it
+		p.pool.Store(key, entry)
+	}
+
+	return entry, true, nil
+}
+
+// Remove removes a rate limiter from the pool
+func (p *RateLimiterPool) Remove(key string) {
+	p.pool.Delete(key)
+}
+
+// Range calls the given function for each key-value pair in the pool
+func (p *RateLimiterPool) Range(f func(key string, entry *RateLimiterEntry) bool) {
+	p.pool.Range(func(key, value interface{}) bool {
+		if strKey, ok := key.(string); ok {
+			if entry, ok := value.(*RateLimiterEntry); ok && entry != nil {
+				return f(strKey, entry)
+			}
+		}
+		return true
+	})
+}
+
+// Size returns the current number of entries in the pool
+func (p *RateLimiterPool) Size() int {
+	count := 0
+	p.pool.Range(func(key, value interface{}) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+// Cleanup removes stale entries that haven't been accessed for longer than the threshold
+func (p *RateLimiterPool) Cleanup(threshold time.Duration) int {
+	removed := 0
+	p.pool.Range(func(key, value interface{}) bool {
+		if entry, ok := value.(*RateLimiterEntry); ok && entry != nil {
+			if entry.IsStaleAfter(threshold) {
+				p.pool.Delete(key)
+				removed++
+			}
+		}
+		return true
+	})
+	return removed
 }
 
 // PodReconciler reconciles Pod objects and manages ENI tags

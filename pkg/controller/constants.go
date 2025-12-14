@@ -110,6 +110,6 @@ var (
 
 	// tagValuePattern is the regex pattern for valid AWS tag values.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
-	// Empty values are also allowed
+	// Empty values are allowed (0-255 characters from the allowed character set)
 	tagValuePattern = regexp.MustCompile(`^[a-zA-Z0-9 +\=._:/@-]{0,255}$`)
 )

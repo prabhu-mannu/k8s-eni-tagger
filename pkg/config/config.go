@@ -12,26 +12,29 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	MetricsBindAddress         string        `mapstructure:"metrics-bind-address"`
-	HealthProbeBindAddress     string        `mapstructure:"health-probe-bind-address"`
-	EnableLeaderElection       bool          `mapstructure:"leader-elect"`
-	AnnotationKey              string        `mapstructure:"annotation-key"`
-	MaxConcurrentReconciles    int           `mapstructure:"max-concurrent-reconciles"`
-	DryRun                     bool          `mapstructure:"dry-run"`
-	WatchNamespace             string        `mapstructure:"watch-namespace"`
-	PrintVersion               bool          `mapstructure:"version"`
-	SubnetIDs                  []string      `mapstructure:"subnet-ids"`
-	AllowSharedENITagging      bool          `mapstructure:"allow-shared-eni-tagging"`
-	EnableENICache             bool          `mapstructure:"enable-eni-cache"`
-	EnableCacheConfigMap       bool          `mapstructure:"enable-cache-configmap"`
-	CacheBatchInterval         time.Duration `mapstructure:"cache-batch-interval"`
-	CacheBatchSize             int           `mapstructure:"cache-batch-size"`
-	AWSRateLimitQPS            float64       `mapstructure:"aws-rate-limit-qps"`
-	AWSRateLimitBurst          int           `mapstructure:"aws-rate-limit-burst"`
-	PprofBindAddress           string        `mapstructure:"pprof-bind-address"`
-	TagNamespace               string        `mapstructure:"tag-namespace"`
-	PodRateLimitQPS            float64       `mapstructure:"pod-rate-limit-qps"`
-	PodRateLimitBurst          int           `mapstructure:"pod-rate-limit-burst"`
+	MetricsBindAddress      string        `mapstructure:"metrics-bind-address"`
+	HealthProbeBindAddress  string        `mapstructure:"health-probe-bind-address"`
+	EnableLeaderElection    bool          `mapstructure:"leader-elect"`
+	AnnotationKey           string        `mapstructure:"annotation-key"`
+	MaxConcurrentReconciles int           `mapstructure:"max-concurrent-reconciles"`
+	DryRun                  bool          `mapstructure:"dry-run"`
+	WatchNamespace          string        `mapstructure:"watch-namespace"`
+	PrintVersion            bool          `mapstructure:"version"`
+	SubnetIDs               []string      `mapstructure:"subnet-ids"`
+	AllowSharedENITagging   bool          `mapstructure:"allow-shared-eni-tagging"`
+	EnableENICache          bool          `mapstructure:"enable-eni-cache"`
+	EnableCacheConfigMap    bool          `mapstructure:"enable-cache-configmap"`
+	CacheBatchInterval      time.Duration `mapstructure:"cache-batch-interval"`
+	CacheBatchSize          int           `mapstructure:"cache-batch-size"`
+	AWSRateLimitQPS         float64       `mapstructure:"aws-rate-limit-qps"`
+	AWSRateLimitBurst       int           `mapstructure:"aws-rate-limit-burst"`
+	PprofBindAddress        string        `mapstructure:"pprof-bind-address"`
+	TagNamespace            string        `mapstructure:"tag-namespace"`
+	PodRateLimitQPS         float64       `mapstructure:"pod-rate-limit-qps"`
+	PodRateLimitBurst       int           `mapstructure:"pod-rate-limit-burst"`
+	// RateLimiterCleanupInterval defines how often to run cleanup of stale per-pod rate limiters.
+	// The cleanup threshold is automatically set to 5x this interval (threshold = interval * 5).
+	// For example, with a 1m interval, rate limiters unused for 5+ minutes will be cleaned up.
 	RateLimiterCleanupInterval time.Duration `mapstructure:"rate-limiter-cleanup-interval"`
 }
 
@@ -54,7 +57,9 @@ func Load() (*Config, error) {
 	pflag.Parse()
 
 	// Bind flags to viper
-	v.BindPFlags(pflag.CommandLine)
+	if err := v.BindPFlags(pflag.CommandLine); err != nil {
+		return nil, fmt.Errorf("failed to bind flags: %w", err)
+	}
 
 	// Set defaults
 	setDefaults(v)
@@ -104,8 +109,9 @@ func Load() (*Config, error) {
 	}
 
 	// Validate tag namespace
+	// Valid values: "" (disabled), "enable" (enabled). Any other value is treated as disabled with a warning.
 	if cfg.TagNamespace != "" && cfg.TagNamespace != "enable" {
-		fmt.Fprintf(os.Stderr, "Warning: invalid tag-namespace value '%s', treating as disabled. Use 'enable' to enable pod namespace-based tag namespacing.\n", cfg.TagNamespace)
+		fmt.Fprintf(os.Stderr, "Warning: invalid tag-namespace value '%s', treating as disabled. Valid values are '' (disabled) or 'enable' (enabled) for pod namespace-based tag namespacing.\n", cfg.TagNamespace)
 	}
 
 	// Validate rate limiting configuration
