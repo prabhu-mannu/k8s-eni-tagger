@@ -13,13 +13,13 @@ import (
 
 func TestUpdatePodAnnotations(t *testing.T) {
 	tests := []struct {
-		name           string
-		pod            *corev1.Pod
-		currentTags    map[string]string
-		desiredHash    string
-		expectedError  bool
-		expectedTags   map[string]string
-		expectedHash   string
+		name          string
+		pod           *corev1.Pod
+		currentTags   map[string]string
+		desiredHash   string
+		expectedError bool
+		expectedTags  map[string]string
+		expectedHash  string
 	}{
 		{
 			name: "UpdateAnnotationsWithValidTags",
@@ -36,7 +36,7 @@ func TestUpdatePodAnnotations(t *testing.T) {
 				"env": "production",
 				"app": "web",
 			},
-			desiredHash: "hash123",
+			desiredHash:   "hash123",
 			expectedError: false,
 			expectedTags: map[string]string{
 				"env": "production",
@@ -77,7 +77,7 @@ func TestUpdatePodAnnotations(t *testing.T) {
 			currentTags: map[string]string{
 				"new": "tag",
 			},
-			desiredHash: "newhash",
+			desiredHash:   "newhash",
 			expectedError: false,
 			expectedTags: map[string]string{
 				"new": "tag",
@@ -95,7 +95,7 @@ func TestUpdatePodAnnotations(t *testing.T) {
 			currentTags: map[string]string{
 				"key": "value",
 			},
-			desiredHash: "newhash",
+			desiredHash:   "newhash",
 			expectedError: false,
 			expectedTags: map[string]string{
 				"key": "value",
