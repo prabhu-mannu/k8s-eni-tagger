@@ -397,10 +397,38 @@ eksctl create iamserviceaccount \
 
 ---
 
+## Testing
+
+### Unit Tests
+
+```bash
+make test
+```
+
+### E2E Tests
+
+Run end-to-end tests in a self-contained Docker Compose environment with mocked AWS and Kubernetes:
+
+```bash
+# Quick start
+make e2e
+
+# Or with more control
+cd e2e/compose
+docker compose up --build --abort-on-container-exit
+docker compose down -v
+```
+
+See [E2E Quick Start Guide](e2e/QUICKSTART.md) and [E2E Documentation](e2e/README.md) for details.
+
+---
+
 ## Resources
 - [IAM Policy Template](iam-policy.json)
 - [Helm Chart Documentation](charts/k8s-eni-tagger/README.md)
 - [Architecture Details](ARCHITECTURE.md)
+- [E2E Testing Guide](e2e/README.md)
+- [E2E Quick Start](e2e/QUICKSTART.md)
 - [AWS Tagging Best Practices](docs/AWS_TAGGING_BEST_PRACTICES.md)
 - [Annotation Format Research](docs/ANNOTATION_FORMAT_RESEARCH.md)
 - [Changelog](CHANGELOG.md)

@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${CONTROLLER_NAMESPACE}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-eni-tagger
+  namespace: ${CONTROLLER_NAMESPACE}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-eni-tagger-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-eni-tagger-cache
+  namespace: ${CONTROLLER_NAMESPACE}
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-eni-tagger-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-eni-tagger-role
+subjects:
+- kind: ServiceAccount
+  name: k8s-eni-tagger
+  namespace: ${CONTROLLER_NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-eni-tagger-cache
+  namespace: ${CONTROLLER_NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-eni-tagger-cache
+subjects:
+- kind: ServiceAccount
+  name: k8s-eni-tagger
+  namespace: ${CONTROLLER_NAMESPACE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-eni-tagger
+  namespace: ${CONTROLLER_NAMESPACE}
+  labels:
+    app: k8s-eni-tagger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-eni-tagger
+  template:
+    metadata:
+      labels:
+        app: k8s-eni-tagger
+    spec:
+      serviceAccountName: k8s-eni-tagger
+      containers:
+      - name: manager
+        image: ${CONTROLLER_IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /manager
+        args:
+        - --annotation-key=${ANNOTATION_KEY}
+        - --metrics-bind-address=${METRICS_BIND_ADDRESS}
+        - --health-probe-bind-address=${HEALTH_PROBE_BIND_ADDRESS}
+        - --leader-elect=${ENABLE_LEADER_ELECTION}
+        - --enable-eni-cache=true
+        - --enable-cache-configmap=${ENABLE_CACHE_PERSISTENCE}
+        - --cache-batch-interval=${CACHE_BATCH_INTERVAL}
+        - --cache-batch-size=${CACHE_BATCH_SIZE}
+        - --max-concurrent-reconciles=${MAX_CONCURRENT_RECONCILES}
+        - --aws-rate-limit-qps=${AWS_RATE_LIMIT_QPS}
+        - --aws-rate-limit-burst=${AWS_RATE_LIMIT_BURST}
+        env:
+        - name: AWS_ENDPOINT_URL
+          value: ${AWS_ENDPOINT_URL}
+        - name: AWS_REGION
+          value: ${AWS_REGION}
+        - name: AWS_ACCESS_KEY_ID
+          value: ${AWS_ACCESS_KEY_ID}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: ${AWS_SECRET_ACCESS_KEY}
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: 8090
+        - name: health
+          containerPort: 8081
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi

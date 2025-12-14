@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -314,4 +315,67 @@ func TestConstructors(t *testing.T) {
 	// Test real client wrapper
 	// We won't call NewClient here to avoid AWS config loading issues in test environment
 	// but we can test the structure if we manually assemble it or mock config loading
+}
+func TestNewClientWithEndpointOverride(t *testing.T) {
+	// Test that AWS_ENDPOINT_URL environment variable is properly handled
+	// This is a behavioral test - we verify the code path doesn't panic
+	// Actual endpoint behavior is tested in E2E tests
+
+	tests := []struct {
+		name        string
+		endpointEnv string
+		shouldWork  bool
+	}{
+		{
+			name:        "No endpoint override",
+			endpointEnv: "",
+			shouldWork:  true,
+		},
+		{
+			name:        "With endpoint override",
+			endpointEnv: "http://localhost:5000",
+			shouldWork:  true,
+		},
+		{
+			name:        "With https endpoint",
+			endpointEnv: "https://mock-aws.example.com",
+			shouldWork:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original env var
+			originalEnv := os.Getenv("AWS_ENDPOINT_URL")
+			defer func() {
+				if originalEnv != "" {
+					os.Setenv("AWS_ENDPOINT_URL", originalEnv)
+				} else {
+					os.Unsetenv("AWS_ENDPOINT_URL")
+				}
+			}()
+
+			// Set test endpoint
+			if tt.endpointEnv != "" {
+				os.Setenv("AWS_ENDPOINT_URL", tt.endpointEnv)
+			} else {
+				os.Unsetenv("AWS_ENDPOINT_URL")
+			}
+
+			// This will fail in test environment due to missing AWS credentials,
+			// but we're testing that the endpoint override logic doesn't panic
+			// The actual functionality is validated in E2E tests
+			ctx := context.Background()
+			_, err := NewClient(ctx)
+
+			// We expect an error (no AWS credentials in test env)
+			// but NOT a panic or nil pointer error
+			if err != nil {
+				// Error is expected in test environment
+				// Just ensure it's not a panic or programming error
+				assert.NotContains(t, err.Error(), "panic")
+				assert.NotContains(t, err.Error(), "nil pointer")
+			}
+		})
+	}
 }

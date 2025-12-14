@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -257,8 +258,17 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
 	}
 
+	// Support custom AWS endpoint for testing/mocking
+	// Check AWS_ENDPOINT_URL environment variable
+	ec2Options := []func(*ec2.Options){}
+	if endpoint := os.Getenv("AWS_ENDPOINT_URL"); endpoint != "" {
+		ec2Options = append(ec2Options, func(o *ec2.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+	}
+
 	return &defaultClient{
-		ec2Client:   ec2.NewFromConfig(cfg),
+		ec2Client:   ec2.NewFromConfig(cfg, ec2Options...),
 		rateLimiter: rateLimiter,
 	}, nil
 }

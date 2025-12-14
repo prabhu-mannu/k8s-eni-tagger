@@ -38,3 +38,5 @@ manager
 k8s-eni-tagger
 !charts/**
 .DS_Store
+docs/**
+*.tar

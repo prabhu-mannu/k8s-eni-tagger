@@ -48,6 +48,48 @@ helm-lint: ## Lint Helm chart.
 test: fmt vet ## Run tests.
 	go test ./... -coverprofile cover.out
 
+##@ E2E Testing
+
+.PHONY: e2e
+e2e: ## Run E2E tests using Docker Compose.
+	cd e2e/compose && docker compose up --build --abort-on-container-exit
+
+.PHONY: e2e-up
+e2e-up: ## Start E2E environment (for debugging).
+	cd e2e/compose && docker compose up --build -d
+
+.PHONY: e2e-down
+e2e-down: ## Stop and clean up E2E environment.
+	cd e2e/compose && docker compose down -v
+
+.PHONY: e2e-logs
+e2e-logs: ## View E2E environment logs.
+	cd e2e/compose && docker compose logs -f
+
+.PHONY: e2e-probe
+e2e-probe: ## Run capability probe to verify AWS mock readiness.
+	cd e2e/compose && docker compose run --rm -e AWS_ENDPOINT_URL=http://moto:5000 -e AWS_REGION=us-west-2 -e AWS_ACCESS_KEY_ID=testing -e AWS_SECRET_ACCESS_KEY=testing runner /runner/capability-probe.sh
+
+.PHONY: e2e-v2
+e2e-v2: ## Run E2E-v2 tests (k3s + external AWS mock via compose).
+	cd e2e-v2/compose && docker compose up --build --abort-on-container-exit
+
+.PHONY: e2e-v2-up
+e2e-v2-up: ## Start E2E-v2 environment (for debugging).
+	cd e2e-v2/compose && docker compose up --build -d
+
+.PHONY: e2e-v2-run
+e2e-v2-run: ## Execute only the E2E-v2 runner against a running stack.
+	cd e2e-v2/compose && docker compose run --rm runner /runner/run.sh
+
+.PHONY: e2e-v2-down
+e2e-v2-down: ## Stop and clean up E2E-v2 environment.
+	cd e2e-v2/compose && docker compose down -v
+
+.PHONY: e2e-v2-logs
+e2e-v2-logs: ## Tail logs from E2E-v2 services.
+	cd e2e-v2/compose && docker compose logs -f
+
 ##@ Build
 
 .PHONY: build
