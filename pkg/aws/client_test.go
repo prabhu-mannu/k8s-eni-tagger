@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -280,60 +281,47 @@ func TestRateLimitConfig(t *testing.T) {
 }
 
 func TestRateLimiter(t *testing.T) {
-	// Create a limiter with small capacity to test waiting
-	rl, err := newRateLimiter(10, 1) // 10 QPS, burst 1
+	// Use a very low QPS to make waits deterministic in tests.
+	// After consuming the initial burst token, the next token should take ~10s.
+	rl, err := newRateLimiter(0.1, 1) // 0.1 QPS, burst 1
 	require.NoError(t, err)
-	ctx := context.Background()
 
-	// 1. First token should be available immediately
-	err = rl.Wait(ctx)
+	// 1. First token should be available immediately (burst).
+	err = rl.Wait(context.Background())
 	assert.NoError(t, err)
+	assert.Less(t, rl.Tokens(), 1.0)
 
-	// 2. Second token needs waiting
-	// check if tokens are depleted
-	assert.Less(t, rl.tokens, 1.0)
-
-	// Test cancellation
-	ctxCancel, cancel := context.WithCancel(context.Background())
-	cancel()
-	err = rl.Wait(ctxCancel)
+	// 2. Next token should not arrive before a short timeout.
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = rl.Wait(ctxTimeout)
 	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
+	assert.Contains(t, err.Error(), "exceed context deadline")
+
+	// 3. Cancellation should be respected while waiting.
+	ctxCancel, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	err = rl.Wait(ctxCancel)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRateLimiterSafetyChecks(t *testing.T) {
-	t.Run("invalid refillRate during wait", func(t *testing.T) {
-		// Create a valid rate limiter
-		rl, err := newRateLimiter(10, 1)
-		require.NoError(t, err)
-		ctx := context.Background()
-
-		// Consume the initial token
-		err = rl.Wait(ctx)
-		require.NoError(t, err)
-
-		// Simulate invalid refillRate (this would normally never happen in production)
-		// We're testing the safety check in Wait()
-		rl.mu.Lock()
-		rl.refillRate = 0
-		rl.mu.Unlock()
-
-		// Next wait should detect invalid refillRate and return error
-		err = rl.Wait(ctx)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid refillRate")
-	})
-
 	t.Run("negative refillRate rejected by constructor", func(t *testing.T) {
 		_, err := newRateLimiter(-1, 10)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "QPS must be positive")
+		assert.Contains(t, err.Error(), "qps must be positive")
 	})
 
 	t.Run("zero refillRate rejected by constructor", func(t *testing.T) {
 		_, err := newRateLimiter(0, 10)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "QPS must be positive")
+		assert.Contains(t, err.Error(), "qps must be positive")
+	})
+
+	t.Run("zero burst rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(1, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "burst must be at least 1")
 	})
 }
 
