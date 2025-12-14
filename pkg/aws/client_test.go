@@ -301,6 +301,42 @@ func TestRateLimiter(t *testing.T) {
 	assert.Equal(t, context.Canceled, err)
 }
 
+func TestRateLimiterSafetyChecks(t *testing.T) {
+	t.Run("invalid refillRate during wait", func(t *testing.T) {
+		// Create a valid rate limiter
+		rl, err := newRateLimiter(10, 1)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// Consume the initial token
+		err = rl.Wait(ctx)
+		require.NoError(t, err)
+
+		// Simulate invalid refillRate (this would normally never happen in production)
+		// We're testing the safety check in Wait()
+		rl.mu.Lock()
+		rl.refillRate = 0
+		rl.mu.Unlock()
+
+		// Next wait should detect invalid refillRate and return error
+		err = rl.Wait(ctx)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid refillRate")
+	})
+
+	t.Run("negative refillRate rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(-1, 10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "QPS must be positive")
+	})
+
+	t.Run("zero refillRate rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(0, 10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "QPS must be positive")
+	})
+}
+
 func TestConstructors(t *testing.T) {
 	// Test GetEC2Client with mock (should return nil as it's not *ec2.Client)
 	mockClient := new(mockEC2Client)
