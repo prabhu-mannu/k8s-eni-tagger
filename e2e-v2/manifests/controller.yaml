@@ -24,6 +24,9 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -33,7 +36,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
-  verbs: ["get", "list", "watch", "create", "update", "patch"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -93,8 +96,9 @@ spec:
         - --leader-elect=${ENABLE_LEADER_ELECTION}
         - --enable-eni-cache=true
         - --enable-cache-configmap=${ENABLE_CACHE_PERSISTENCE}
-        - --cache-batch-interval=${CACHE_BATCH_INTERVAL}
-        - --cache-batch-size=${CACHE_BATCH_SIZE}
+        - --cache-configmap-flush-interval=${CACHE_CONFIGMAP_FLUSH_INTERVAL}
+        - --cache-configmap-shards=${CACHE_CONFIGMAP_SHARDS}
+        - --cache-configmap-max-bytes-per-shard=${CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD}
         - --max-concurrent-reconciles=${MAX_CONCURRENT_RECONCILES}
         - --aws-rate-limit-qps=${AWS_RATE_LIMIT_QPS}
         - --aws-rate-limit-burst=${AWS_RATE_LIMIT_BURST}

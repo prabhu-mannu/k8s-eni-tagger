@@ -31,6 +31,30 @@ var (
 			Help: "Total number of ENI cache misses",
 		},
 	)
+
+	// CacheFlushesTotal tracks the number of cache flushes to ConfigMap
+	CacheFlushesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8s_eni_tagger_cache_flushes_total",
+			Help: "Total number of ENI cache flushes to ConfigMap shards",
+		},
+	)
+
+	// CacheFlushErrorsTotal tracks the number of cache flush errors
+	CacheFlushErrorsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8s_eni_tagger_cache_flush_errors_total",
+			Help: "Total number of ENI cache flush errors",
+		},
+	)
+
+	// CacheEntriesEvictedTotal tracks the number of evicted cache entries
+	CacheEntriesEvictedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8s_eni_tagger_cache_entries_evicted_total",
+			Help: "Total number of ENI cache entries evicted due to shard size limits",
+		},
+	)
 )
 
 func init() {
@@ -39,5 +63,8 @@ func init() {
 		AWSAPILatency,
 		CacheHitsTotal,
 		CacheMissesTotal,
+		CacheFlushesTotal,
+		CacheFlushErrorsTotal,
+		CacheEntriesEvictedTotal,
 	)
 }
