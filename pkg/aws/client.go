@@ -204,14 +204,38 @@ func newRateLimiter(qps float64, burst int) (*rateLimiter, error) {
 	}, nil
 }
 
+// Wait blocks until a token is available or context is canceled.
+// This method assumes:
+// - refillRate is always positive (validated in newRateLimiter)
+// - context has a reasonable timeout to prevent indefinite blocking
+// - tokens will eventually accumulate to >= 1.0 based on refillRate
+//
+// The loop includes a safety check to prevent infinite loops in case of
+// unexpected conditions (e.g., concurrent modification of refillRate,
+// floating-point precision issues, or extremely low refill rates).
 func (r *rateLimiter) Wait(ctx context.Context) error {
+	const maxIterations = 1000 // Safety limit to prevent infinite loops
+	iterations := 0
+
 	for {
+		iterations++
+		if iterations > maxIterations {
+			return fmt.Errorf("rate limiter exceeded maximum wait iterations (%d), possible configuration issue with refillRate=%f",
+				maxIterations, r.refillRate)
+		}
+
 		// Acquire lock and refill tokens
 		r.mu.Lock()
 		now := time.Now()
 		elapsed := now.Sub(r.lastRefill).Seconds()
 		r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
 		r.lastRefill = now
+
+		// Additional safety check: ensure refillRate is still positive
+		if r.refillRate <= 0 {
+			r.mu.Unlock()
+			return fmt.Errorf("rate limiter has invalid refillRate: %f", r.refillRate)
+		}
 
 		if r.tokens >= 1 {
 			r.tokens--
