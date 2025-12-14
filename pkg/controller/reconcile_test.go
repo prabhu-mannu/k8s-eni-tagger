@@ -467,3 +467,59 @@ func TestReconcileRateLimiting(t *testing.T) {
 	// Verify that AWS calls were only made once (first reconcile)
 	mockAWS.AssertExpectations(t)
 }
+
+func TestReconcileRateLimiterInitError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	// Create a pod with valid annotation
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-rate-init-error",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationKey: `{"cost-center":"123","team":"platform"}`,
+			},
+			Finalizers: []string{finalizerName},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.0.0.1",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	mockAWS := &MockAWSClient{}
+
+	r := &PodReconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   10.0, // Valid QPS
+		PodRateLimitBurst: 0,    // Invalid: burst must be at least 1
+		Recorder:          record.NewFakeRecorder(10),
+	}
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+		},
+	}
+
+	// Reconciliation should succeed despite rate limiter init failure
+	// Rate limiting should be gracefully skipped
+	mockAWS.On("GetENIInfoByIP", mock.Anything, "10.0.0.1").Return(&aws.ENIInfo{
+		ID: "eni-rate-init-error",
+	}, nil).Once()
+	mockAWS.On("TagENI", mock.Anything, "eni-rate-init-error", mock.Anything).Return(nil).Once()
+
+	res, err := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Zero(t, res.RequeueAfter) // Should not requeue (no rate limiting)
+
+	// Verify that AWS calls were made (rate limiting was skipped due to init error)
+	mockAWS.AssertExpectations(t)
+}
