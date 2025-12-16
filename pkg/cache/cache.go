@@ -12,10 +12,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// cacheUpdate represents a pending update to the ConfigMap
-type cacheUpdate struct {
-	ip   string
-	info *aws.ENIInfo
+// cacheEntry represents an in-memory cache entry with access tracking for LRU eviction.
+type cacheEntry struct {
+	Info       *aws.ENIInfo
+	LastAccess time.Time
 }
 
 // Cache defines the interface for ENI caching
@@ -32,56 +32,58 @@ type Cache interface {
 // This reduces AWS API calls significantly.
 type ENICache struct {
 	mu        sync.RWMutex
-	cache     map[string]*aws.ENIInfo
+	cache     map[string]*cacheEntry
 	awsClient aws.Client
 
 	// ConfigMap persistence (optional)
 	cmPersister ConfigMapPersister
 
-	// Batching/rate limiting
-	updateQueue   chan cacheUpdate
-	stopWorker    chan struct{}
-	batchInterval time.Duration
-	batchSize     int
-	workerOnce    sync.Once
+	// Flush configuration
+	flushInterval time.Duration
+	flushTicker   *time.Ticker
+	flushDone     chan struct{}
+	flushOnce     sync.Once
+
+	// Shutdown context for graceful cleanup
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // ConfigMapPersister interface for optional ConfigMap persistence
 type ConfigMapPersister interface {
-	Load(ctx context.Context) (map[string]*aws.ENIInfo, error)
-	Save(ctx context.Context, ip string, info *aws.ENIInfo) error
-	Delete(ctx context.Context, ip string) error
+	Load(ctx context.Context) (map[string]*cacheEntry, error)
+	Flush(ctx context.Context, entries map[string]*cacheEntry) error
+	CleanupStaleShards(ctx context.Context) error
+	SetShardConfig(shards int, maxBytesPerShard int64)
 }
 
 // NewENICache creates a new ENI cache
 func NewENICache(awsClient aws.Client) *ENICache {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	c := &ENICache{
-		cache:         make(map[string]*aws.ENIInfo),
-		awsClient:     awsClient,
-		updateQueue:   make(chan cacheUpdate, 1000),
-		stopWorker:    make(chan struct{}),
-		batchInterval: 2 * time.Second, // configurable
-		batchSize:     20,              // configurable
+		cache:          make(map[string]*cacheEntry),
+		awsClient:      awsClient,
+		flushInterval:  1 * time.Minute, // default, configurable via SetFlushInterval
+		flushDone:      make(chan struct{}),
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
 	}
 	return c
 }
 
-// SetBatchConfig updates batching parameters. Call before enabling ConfigMap persistence.
-func (c *ENICache) SetBatchConfig(interval time.Duration, size int) {
+// SetFlushInterval sets the flush interval for ConfigMap persistence.
+func (c *ENICache) SetFlushInterval(interval time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if interval > 0 {
-		c.batchInterval = interval
-	}
-	if size > 0 {
-		c.batchSize = size
+		c.flushInterval = interval
 	}
 }
 
 // WithConfigMapPersister adds ConfigMap persistence to the cache
 func (c *ENICache) WithConfigMapPersister(persister ConfigMapPersister) *ENICache {
 	c.cmPersister = persister
-	c.ensureWorker()
+	c.startFlushWorker()
 	return c
 }
 
@@ -92,27 +94,36 @@ func (c *ENICache) LoadFromConfigMap(ctx context.Context) error {
 	}
 
 	logger := log.FromContext(ctx)
+
+	// Clean up stale shards before loading
+	if err := c.cmPersister.CleanupStaleShards(ctx); err != nil {
+		logger.Error(err, "Failed to cleanup stale ConfigMap shards")
+		// Don't fail startup on cleanup error
+	}
+
 	entries, err := c.cmPersister.Load(ctx)
 	if err != nil {
 		logger.Error(err, "Failed to load ENI cache from ConfigMap")
 		return err
 	}
 
+	// Load valid entries to in-memory cache with LastAccess timestamp
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	for ip, info := range entries {
-		c.cache[ip] = info
+	for ip, entry := range entries {
+		c.cache[ip] = entry
 	}
+	c.mu.Unlock()
 	logger.Info("Loaded ENI cache from ConfigMap", "entries", len(entries))
+
 	return nil
 }
 
 // GetENIInfoByIP returns ENI info for an IP, using cache if available
 func (c *ENICache) GetENIInfoByIP(ctx context.Context, ip string) (*aws.ENIInfo, error) {
 	// Try in-memory cache first
-	if info, ok := c.get(ip); ok {
+	if entry, ok := c.getEntry(ip); ok {
 		metrics.CacheHitsTotal.Inc()
-		return info, nil
+		return entry.Info, nil
 	}
 	metrics.CacheMissesTotal.Inc()
 
@@ -123,106 +134,98 @@ func (c *ENICache) GetENIInfoByIP(ctx context.Context, ip string) (*aws.ENIInfo,
 	}
 
 	// Store in cache (persists until pod deletion)
-	c.set(ctx, ip, info)
+	c.setEntry(ip, info)
 	return info, nil
 }
 
-// get retrieves from in-memory cache
-func (c *ENICache) get(ip string) (*aws.ENIInfo, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+// getEntry retrieves from in-memory cache and updates LastAccess
+func (c *ENICache) getEntry(ip string) (*cacheEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	info, ok := c.cache[ip]
-	return info, ok
+	entry, ok := c.cache[ip]
+	if ok {
+		// Update LastAccess on hit for LRU eviction tracking
+		entry.LastAccess = time.Now()
+	}
+	return entry, ok
 }
 
-// set stores in in-memory cache and optionally persists to ConfigMap
-func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo) {
+// setEntry stores in in-memory cache with current timestamp
+func (c *ENICache) setEntry(ip string, info *aws.ENIInfo) {
 	c.mu.Lock()
-	c.cache[ip] = info
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
-	// Enqueue update for batching/rate limiting
-	if c.cmPersister != nil {
-		c.ensureWorker()
-		select {
-		case c.updateQueue <- cacheUpdate{ip: ip, info: info}:
-		default:
-			// queue full, drop update (log warning)
-			log.FromContext(ctx).Info("ConfigMap update queue full, dropping update", "ip", ip)
-		}
+	c.cache[ip] = &cacheEntry{
+		Info:       info,
+		LastAccess: time.Now(),
 	}
 }
 
 // Invalidate removes an entry from the cache (called on pod deletion)
 func (c *ENICache) Invalidate(ctx context.Context, ip string) {
-	logger := log.FromContext(ctx)
-
+	// Remove from in-memory immediately
 	c.mu.Lock()
 	delete(c.cache, ip)
 	c.mu.Unlock()
-
-	if c.cmPersister != nil {
-		if err := c.cmPersister.Delete(ctx, ip); err != nil {
-			logger.Error(err, "Failed to delete ENI from ConfigMap, cache may grow unbounded", "ip", ip)
-		}
-	}
 }
 
-func (c *ENICache) ensureWorker() {
-	c.workerOnce.Do(func() {
-		go c.configMapWorker()
+func (c *ENICache) startFlushWorker() {
+	c.flushOnce.Do(func() {
+		go c.flushWorker()
 	})
 }
 
-// configMapWorker batches and rate-limits ConfigMap updates
-func (c *ENICache) configMapWorker() {
-	logger := log.Log.WithName("eni-cache-worker")
+// flushWorker periodically snapshots the cache and flushes to ConfigMap shards
+func (c *ENICache) flushWorker() {
+	logger := log.Log.WithName("eni-cache-flush-worker")
 
-	// Copy batching config under lock to avoid race conditions
 	c.mu.RLock()
-	batchSize := c.batchSize
-	batchInterval := c.batchInterval
+	flushInterval := c.flushInterval
 	c.mu.RUnlock()
 
-	batch := make([]cacheUpdate, 0, batchSize)
-	ticker := time.NewTicker(batchInterval)
-	defer ticker.Stop()
+	c.flushTicker = time.NewTicker(flushInterval)
+	defer c.flushTicker.Stop()
+
 	for {
 		select {
-		case <-c.stopWorker:
+		case <-c.shutdownCtx.Done():
+			// Final flush on shutdown
+			c.performFlush(logger)
+			close(c.flushDone)
 			return
-		case upd := <-c.updateQueue:
-			batch = append(batch, upd)
-			if len(batch) >= c.batchSize {
-				c.flushBatch(batch, logger)
-				batch = batch[:0]
-			}
-		case <-ticker.C:
-			if len(batch) > 0 {
-				c.flushBatch(batch, logger)
-				batch = batch[:0]
-			}
+		case <-c.flushTicker.C:
+			c.performFlush(logger)
 		}
 	}
 }
 
-// flushBatch applies a batch of updates to the ConfigMap
-func (c *ENICache) flushBatch(batch []cacheUpdate, logger logr.Logger) {
-	if c.cmPersister == nil || len(batch) == 0 {
+// performFlush snapshots the cache and flushes to ConfigMap shards with eviction
+func (c *ENICache) performFlush(logger logr.Logger) {
+	if c.cmPersister == nil {
 		return
 	}
 
-	// Use timeout context to prevent hanging during shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(c.shutdownCtx, 30*time.Second)
 	defer cancel()
 
-	// Apply sets
-	for _, upd := range batch {
-		if err := c.cmPersister.Save(ctx, upd.ip, upd.info); err != nil {
-			logger.Error(err, "Batch persist ENI to ConfigMap failed", "ip", upd.ip)
-		}
+	// Take snapshot of cache
+	c.mu.RLock()
+	snapshot := make(map[string]*cacheEntry)
+	for ip, entry := range c.cache {
+		snapshot[ip] = entry
 	}
+	c.mu.RUnlock()
+
+	// Flush snapshot to ConfigMap shards (persister handles packing and eviction)
+	if err := c.cmPersister.Flush(ctx, snapshot); err != nil {
+		logger.Error(err, "Failed to flush ENI cache to ConfigMap")
+		metrics.CacheFlushErrorsTotal.Inc()
+		return
+	}
+
+	metrics.CacheFlushesTotal.Inc()
+	logger.V(1).Info("Cache flush completed", "entries", len(snapshot))
 }
 
 // Size returns the current cache size (for testing/metrics)
@@ -230,4 +233,20 @@ func (c *ENICache) Size() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.cache)
+}
+
+// Stop gracefully shuts down the cache worker and waits for in-flight
+// ConfigMap flushes to finish or be canceled. It returns ctx.Err() if the
+// wait times out or is canceled.
+func (c *ENICache) Stop(ctx context.Context) error {
+	// Signal shutdown to flush worker
+	c.shutdownCancel()
+
+	// Wait for flush worker to finish
+	select {
+	case <-c.flushDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

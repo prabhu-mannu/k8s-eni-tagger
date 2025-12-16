@@ -20,8 +20,9 @@ ENI_TAGGER_SUBNET_IDS: {{ $c.subnetIDs | quote }}
 ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING: {{ $c.allowSharedENITagging | quote }}
 ENI_TAGGER_ENABLE_ENI_CACHE: {{ $c.enableENICache | quote }}
 ENI_TAGGER_ENABLE_CACHE_CONFIGMAP: {{ $c.enableCacheConfigMap | quote }}
-ENI_TAGGER_CACHE_BATCH_INTERVAL: {{ $c.cacheBatchInterval | quote }}
-ENI_TAGGER_CACHE_BATCH_SIZE: {{ $c.cacheBatchSize | quote }}
+ENI_TAGGER_CACHE_CONFIGMAP_FLUSH_INTERVAL: {{ $c.cacheConfigMapFlushInterval | quote }}
+ENI_TAGGER_CACHE_CONFIGMAP_SHARDS: {{ $c.cacheConfigMapShards | quote }}
+ENI_TAGGER_CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD: {{ $c.cacheConfigMapMaxBytesPerShard | quote }}
 ENI_TAGGER_AWS_RATE_LIMIT_QPS: {{ $c.awsRateLimitQPS | quote }}
 ENI_TAGGER_AWS_RATE_LIMIT_BURST: {{ $c.awsRateLimitBurst | quote }}
 ENI_TAGGER_PPROF_BIND_ADDRESS: {{ $c.pprofBindAddress | quote }}

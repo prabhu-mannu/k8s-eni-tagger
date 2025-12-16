@@ -34,7 +34,9 @@ func NewConfigMapPersister(client client.Client, namespace string) ConfigMapPers
 }
 
 // Load loads all cached ENI entries from the ConfigMap
-func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo, error) {
+// Returns (validEntries, corruptedEntries, error)
+// Corrupted entries will be queued for deletion by the caller
+func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo, []string, error) {
 	logger := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{}
@@ -46,9 +48,9 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("ENI cache ConfigMap not found, starting fresh")
-			return make(map[string]*aws.ENIInfo), nil
+			return make(map[string]*aws.ENIInfo), []string{}, nil
 		}
-		return nil, fmt.Errorf("failed to get ConfigMap: %w", err)
+		return nil, nil, fmt.Errorf("failed to get ConfigMap: %w", err)
 	}
 
 	result := make(map[string]*aws.ENIInfo)
@@ -56,38 +58,26 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	for ip, data := range cm.Data {
 		var info aws.ENIInfo
 		if err := json.Unmarshal([]byte(data), &info); err != nil {
-			logger.Error(err, "Failed to unmarshal ENI info, entry corrupted - will clean up", "ip", ip, "data", data)
+			logger.Error(err, "Failed to unmarshal ENI info, entry corrupted - will queue for deletion", "ip", ip, "data", data)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
 		// Validate that required fields are present
 		if info.ID == "" {
-			logger.Error(nil, "ENI info missing required ID field, entry corrupted - will clean up", "ip", ip, "data", data)
+			logger.Error(nil, "ENI info missing required ID field, entry corrupted - will queue for deletion", "ip", ip, "data", data)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
 		result[ip] = &info
 	}
 
-	// Clean up corrupted entries asynchronously to avoid blocking cache loading
+	// Log corruption detection - caller will queue these for deletion
 	if len(skippedEntries) > 0 {
-		logger.Info("ConfigMap cache corruption detected, cleaning up corrupted entries",
+		logger.Info("ConfigMap cache corruption detected; entries will be cleaned up on next flush",
 			"corruptedEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
-
-		// Clean up corrupted entries in background to avoid blocking
-		// Use context.Background() since this is best-effort cleanup that should complete even if parent context is canceled
-		go func(cleanupCtx context.Context, entries []string) {
-			for _, ip := range entries {
-				if err := p.Delete(cleanupCtx, ip); err != nil {
-					logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
-				} else {
-					logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
-				}
-			}
-		}(context.Background(), skippedEntries)
 	}
 
-	return result, nil
+	return result, skippedEntries, nil
 }
 
 // Save persists a single ENI entry to the ConfigMap

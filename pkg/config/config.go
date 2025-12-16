@@ -12,26 +12,27 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	MetricsBindAddress      string        `mapstructure:"metrics-bind-address"`
-	HealthProbeBindAddress  string        `mapstructure:"health-probe-bind-address"`
-	EnableLeaderElection    bool          `mapstructure:"leader-elect"`
-	AnnotationKey           string        `mapstructure:"annotation-key"`
-	MaxConcurrentReconciles int           `mapstructure:"max-concurrent-reconciles"`
-	DryRun                  bool          `mapstructure:"dry-run"`
-	WatchNamespace          string        `mapstructure:"watch-namespace"`
-	PrintVersion            bool          `mapstructure:"version"`
-	SubnetIDs               []string      `mapstructure:"subnet-ids"`
-	AllowSharedENITagging   bool          `mapstructure:"allow-shared-eni-tagging"`
-	EnableENICache          bool          `mapstructure:"enable-eni-cache"`
-	EnableCacheConfigMap    bool          `mapstructure:"enable-cache-configmap"`
-	CacheBatchInterval      time.Duration `mapstructure:"cache-batch-interval"`
-	CacheBatchSize          int           `mapstructure:"cache-batch-size"`
-	AWSRateLimitQPS         float64       `mapstructure:"aws-rate-limit-qps"`
-	AWSRateLimitBurst       int           `mapstructure:"aws-rate-limit-burst"`
-	PprofBindAddress        string        `mapstructure:"pprof-bind-address"`
-	TagNamespace            string        `mapstructure:"tag-namespace"`
-	PodRateLimitQPS         float64       `mapstructure:"pod-rate-limit-qps"`
-	PodRateLimitBurst       int           `mapstructure:"pod-rate-limit-burst"`
+	MetricsBindAddress             string        `mapstructure:"metrics-bind-address"`
+	HealthProbeBindAddress         string        `mapstructure:"health-probe-bind-address"`
+	EnableLeaderElection           bool          `mapstructure:"leader-elect"`
+	AnnotationKey                  string        `mapstructure:"annotation-key"`
+	MaxConcurrentReconciles        int           `mapstructure:"max-concurrent-reconciles"`
+	DryRun                         bool          `mapstructure:"dry-run"`
+	WatchNamespace                 string        `mapstructure:"watch-namespace"`
+	PrintVersion                   bool          `mapstructure:"version"`
+	SubnetIDs                      []string      `mapstructure:"subnet-ids"`
+	AllowSharedENITagging          bool          `mapstructure:"allow-shared-eni-tagging"`
+	EnableENICache                 bool          `mapstructure:"enable-eni-cache"`
+	EnableCacheConfigMap           bool          `mapstructure:"enable-cache-configmap"`
+	CacheConfigMapFlushInterval    time.Duration `mapstructure:"cache-configmap-flush-interval"`
+	CacheConfigMapShards           int           `mapstructure:"cache-configmap-shards"`
+	CacheConfigMapMaxBytesPerShard int64         `mapstructure:"cache-configmap-max-bytes-per-shard"`
+	AWSRateLimitQPS                float64       `mapstructure:"aws-rate-limit-qps"`
+	AWSRateLimitBurst              int           `mapstructure:"aws-rate-limit-burst"`
+	PprofBindAddress               string        `mapstructure:"pprof-bind-address"`
+	TagNamespace                   string        `mapstructure:"tag-namespace"`
+	PodRateLimitQPS                float64       `mapstructure:"pod-rate-limit-qps"`
+	PodRateLimitBurst              int           `mapstructure:"pod-rate-limit-burst"`
 	// RateLimiterCleanupInterval defines how often to run cleanup of stale per-pod rate limiters.
 	// The cleanup threshold is automatically set to 5x this interval (threshold = interval * 5).
 	// For example, with a 1m interval, rate limiters unused for 5+ minutes will be cleaned up.
@@ -151,8 +152,9 @@ func defineFlags(v *viper.Viper) {
 	// ENI Cache flags
 	pflag.Bool("enable-eni-cache", true, "Enable in-memory ENI caching (cached until pod deletion).")
 	pflag.Bool("enable-cache-configmap", false, "Enable ConfigMap persistence for ENI cache (survives restarts).")
-	pflag.Duration("cache-batch-interval", 2*time.Second, "Batch interval for ConfigMap cache persistence (e.g., 2s).")
-	pflag.Int("cache-batch-size", 20, "Batch size for ConfigMap cache persistence.")
+	pflag.Duration("cache-configmap-flush-interval", 1*time.Minute, "Flush interval for sharded ConfigMap cache persistence (e.g., 1m).")
+	pflag.Int("cache-configmap-shards", 3, "Number of ConfigMap shards for snapshot persistence.")
+	pflag.Int64("cache-configmap-max-bytes-per-shard", 900*1024, "Maximum size in bytes per ConfigMap shard (default 900 KiB).")
 
 	// Rate limiting flags
 	pflag.Float64("aws-rate-limit-qps", 10, "AWS API rate limit (requests per second).")
@@ -183,8 +185,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("allow-shared-eni-tagging", false)
 	v.SetDefault("enable-eni-cache", true)
 	v.SetDefault("enable-cache-configmap", false)
-	v.SetDefault("cache-batch-interval", 2*time.Second)
-	v.SetDefault("cache-batch-size", 20)
+	v.SetDefault("cache-configmap-flush-interval", 1*time.Minute)
+	v.SetDefault("cache-configmap-shards", 3)
+	v.SetDefault("cache-configmap-max-bytes-per-shard", int64(900*1024))
 	v.SetDefault("aws-rate-limit-qps", 10.0)
 	v.SetDefault("aws-rate-limit-burst", 20)
 	v.SetDefault("pprof-bind-address", "0")

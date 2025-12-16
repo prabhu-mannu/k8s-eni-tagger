@@ -32,8 +32,9 @@ METRICS_BIND_ADDRESS=${METRICS_BIND_ADDRESS:-8090}
 HEALTH_PROBE_BIND_ADDRESS=${HEALTH_PROBE_BIND_ADDRESS:-8081}
 ENABLE_LEADER_ELECTION=${ENABLE_LEADER_ELECTION:-false}
 ENABLE_CACHE_PERSISTENCE=${ENABLE_CACHE_PERSISTENCE:-false}
-CACHE_BATCH_INTERVAL=${CACHE_BATCH_INTERVAL:-2s}
-CACHE_BATCH_SIZE=${CACHE_BATCH_SIZE:-20}
+CACHE_CONFIGMAP_FLUSH_INTERVAL=${CACHE_CONFIGMAP_FLUSH_INTERVAL:-1m}
+CACHE_CONFIGMAP_SHARDS=${CACHE_CONFIGMAP_SHARDS:-3}
+CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD=${CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD:-921600}
 MAX_CONCURRENT_RECONCILES=${MAX_CONCURRENT_RECONCILES:-1}
 AWS_RATE_LIMIT_QPS=${AWS_RATE_LIMIT_QPS:-10}
 AWS_RATE_LIMIT_BURST=${AWS_RATE_LIMIT_BURST:-20}
@@ -117,7 +118,7 @@ deploy_mock() {
 
 deploy_controller() {
   export CONTROLLER_IMAGE CONTROLLER_NAMESPACE ANNOTATION_KEY METRICS_BIND_ADDRESS HEALTH_PROBE_BIND_ADDRESS
-  export ENABLE_LEADER_ELECTION ENABLE_CACHE_PERSISTENCE CACHE_BATCH_INTERVAL CACHE_BATCH_SIZE
+  export ENABLE_LEADER_ELECTION ENABLE_CACHE_PERSISTENCE CACHE_CONFIGMAP_FLUSH_INTERVAL CACHE_CONFIGMAP_SHARDS CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD
   export MAX_CONCURRENT_RECONCILES AWS_RATE_LIMIT_QPS AWS_RATE_LIMIT_BURST
   export AWS_ENDPOINT_URL="$CONTROLLER_AWS_ENDPOINT"
   export AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
@@ -188,6 +189,56 @@ verify_tags() {
   log_info "Tags applied successfully"
 }
 
+verify_configmap_shards() {
+  if [ "${ENABLE_CACHE_PERSISTENCE}" != "true" ]; then
+    log_info "Skipping ConfigMap shard verification (cache persistence disabled)"
+    return
+  fi
+
+  log_info "Verifying ConfigMap shard contents"
+  # Ensure we have a pod IP to look for in shard keys
+  local pod_ip
+  pod_ip=$(kubectl -n "$CONTROLLER_NAMESPACE" get pod e2e-eni-tagger-pod -o jsonpath='{.status.podIP}')
+  if [ -z "$pod_ip" ]; then
+    log_error "Pod IP unknown; cannot verify cache shards"
+    exit 1
+  fi
+
+  local waited=0
+  while [ $waited -lt $MAX_WAIT_SECONDS ]; do
+    local found=false
+    # Discover actual shard ConfigMaps via label selector so we don't rely on the
+    # runner's CACHE_CONFIGMAP_SHARDS value matching the controller deployment.
+    mapfile -t shards < <(kubectl -n "$CONTROLLER_NAMESPACE" get configmap -l eni-tagger.io/cache=eni-cache -o jsonpath='{range .items[*]}{.metadata.name} {end}' 2>/dev/null || true)
+    for cm in "${shards[@]:-}"; do
+      if [ -z "$cm" ]; then
+        continue
+      fi
+      if kubectl -n "$CONTROLLER_NAMESPACE" get configmap "$cm" -o jsonpath="{.data['$pod_ip']}" >/dev/null 2>&1; then
+        local val
+        val=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap "$cm" -o jsonpath="{.data['$pod_ip']}")
+        # Validate compact JSON contains required fields 'i' (eni suffix) and 'a' (lastAccess)
+        if echo "$val" | jq -e '.i and .a' >/dev/null 2>&1; then
+          found=true
+          break
+        fi
+      fi
+    done
+
+    if [ "$found" = true ]; then
+      log_info "Found cache entry for pod IP ${pod_ip} in ConfigMap shards"
+      return
+    fi
+
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  log_error "Cache entry for pod IP ${pod_ip} not found in any shard after ${MAX_WAIT_SECONDS}s"
+  kubectl -n "$CONTROLLER_NAMESPACE" get configmap -l eni-tagger.io/cache=eni-cache -o yaml || true
+  exit 1
+}
+
 delete_and_verify_cleanup() {
   log_info "Deleting test pod and verifying tag cleanup"
   kubectl -n "$CONTROLLER_NAMESPACE" delete pod e2e-eni-tagger-pod --ignore-not-found --timeout=60s
@@ -228,6 +279,7 @@ main() {
   apply_test_pod
   wait_for_reconciliation
   verify_tags
+  verify_configmap_shards
   delete_and_verify_cleanup
   log_info "E2E-v2 flow completed"
 }

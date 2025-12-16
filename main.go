@@ -158,18 +158,22 @@ func main() {
 	var eniCache *enicache.ENICache
 	if cfg.EnableENICache {
 		eniCache = enicache.NewENICache(awsClient)
-		// Apply batch settings before enabling persistence
-		eniCache.SetBatchConfig(cfg.CacheBatchInterval, cfg.CacheBatchSize)
 
 		// Add ConfigMap persistence if enabled
 		if cfg.EnableCacheConfigMap {
 			namespace := getControllerNamespace()
 			cmPersister := enicache.NewConfigMapPersister(mgr.GetClient(), namespace)
+			cmPersister.SetShardConfig(cfg.CacheConfigMapShards, cfg.CacheConfigMapMaxBytesPerShard)
 			eniCache.WithConfigMapPersister(cmPersister)
+			eniCache.SetFlushInterval(cfg.CacheConfigMapFlushInterval)
 			if err := eniCache.LoadFromConfigMap(ctx); err != nil {
 				setupLog.Error(err, "Failed to load cache from ConfigMap, starting fresh")
 			}
-			setupLog.Info("ENI cache ConfigMap persistence enabled", "namespace", namespace)
+			setupLog.Info("ENI cache ConfigMap persistence enabled",
+				"namespace", namespace,
+				"shards", cfg.CacheConfigMapShards,
+				"maxBytesPerShard", cfg.CacheConfigMapMaxBytesPerShard,
+				"flushInterval", cfg.CacheConfigMapFlushInterval)
 		}
 
 		setupLog.Info("ENI caching enabled (lifecycle-based)", "configMapPersistence", cfg.EnableCacheConfigMap)

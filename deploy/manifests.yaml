@@ -39,8 +39,9 @@ data:
   # ENI_TAGGER_DRY_RUN: "false"
   # ENI_TAGGER_ALLOW_SHARED_ENI_TAGGING: "false"
   # ENI_TAGGER_ENABLE_CACHE_CONFIGMAP: "false"
-  # ENI_TAGGER_CACHE_BATCH_INTERVAL: "2s"
-  # ENI_TAGGER_CACHE_BATCH_SIZE: "20"
+  # ENI_TAGGER_CACHE_CONFIGMAP_FLUSH_INTERVAL: "1m"
+  # ENI_TAGGER_CACHE_CONFIGMAP_SHARDS: "3"
+  # ENI_TAGGER_CACHE_CONFIGMAP_MAX_BYTES_PER_SHARD: "921600"
   # ENI_TAGGER_AWS_RATE_LIMIT_QPS: "10"
   # ENI_TAGGER_AWS_RATE_LIMIT_BURST: "20"
   # ENI_TAGGER_PPROF_BIND_ADDRESS: "0"
@@ -74,7 +75,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
-  verbs: ["get", "list", "watch", "create", "update", "patch"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

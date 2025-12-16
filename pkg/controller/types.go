@@ -63,7 +63,7 @@ func (e *RateLimiterEntry) GetLastAccess() time.Time {
 // Allow checks if the rate limiter allows the request
 func (e *RateLimiterEntry) Allow() bool {
 	if e.limiter == nil {
-		return true // Allow if limiter is nil (for testing or error cases)
+		panic("rate limiter is nil - this indicates a programming error in initialization")
 	}
 	return e.limiter.Allow()
 }
@@ -72,8 +72,7 @@ func (e *RateLimiterEntry) Allow() bool {
 // Returns true if the request is allowed, false if rate limited
 func (e *RateLimiterEntry) AllowAndUpdate() bool {
 	if e.limiter == nil {
-		e.UpdateLastAccess(time.Now())
-		return true // Allow if limiter is nil (for testing or error cases)
+		panic("rate limiter is nil - this indicates a programming error in initialization")
 	}
 	allowed := e.limiter.Allow()
 	if allowed {
