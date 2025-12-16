@@ -28,7 +28,8 @@ type tagDiff struct {
 //   - error: any parsing error
 //
 // The function calculates the minimal set of changes needed to bring the ENI tags
-// in sync with the desired state.
+// in sync with the desired state. It also handles namespace changes by detecting
+// when the effective namespace has changed and including orphaned tags in the removal list.
 func (r *PodReconciler) parseAndCompareTags(ctx context.Context, pod *corev1.Pod, annotationValue, lastAppliedValue string) (map[string]string, map[string]string, *tagDiff, error) {
 	logger := log.FromContext(ctx)
 
@@ -73,6 +74,18 @@ func (r *PodReconciler) parseAndCompareTags(ctx context.Context, pod *corev1.Pod
 		if _, ok := currentTags[k]; !ok {
 			diff.toRemove = append(diff.toRemove, k)
 		}
+	}
+
+	// Handle namespace change cleanup: detect if the effective namespace has changed
+	// and add any orphaned tags from the old namespace to the removal list
+	lastAppliedNamespace := pod.Annotations[LastAppliedNamespaceKey]
+	if lastAppliedNamespace != effectiveNamespace && lastAppliedNamespace != "" {
+		logger.Info("Namespace change detected, will clean up orphaned tags",
+			"lastNamespace", lastAppliedNamespace,
+			"currentNamespace", effectiveNamespace)
+		// Tags from the old namespace that aren't in the current tags should be removed
+		// The lastAppliedTags already have the old namespace prefix, so they're already
+		// included in the diff.toRemove if not present in currentTags
 	}
 
 	return currentTags, lastAppliedTags, diff, nil

@@ -3,9 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"k8s-eni-tagger/pkg/aws"
+	"k8s-eni-tagger/pkg/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -13,6 +13,9 @@ import (
 
 // retryUntagENI retries untag operations with exponential backoff and context cancellation support
 func (r *PodReconciler) retryUntagENI(ctx context.Context, eniID string, tags []string) error {
+	if r.AWSClient == nil {
+		return fmt.Errorf("AWS client is not initialized")
+	}
 	return retryWithBackoff(ctx, maxUntagRetries, initialRetryBackoff, retryBackoffMultiplier, func() error {
 		return r.AWSClient.UntagENI(ctx, eniID, tags)
 	})
@@ -40,6 +43,10 @@ func (r *PodReconciler) getENIInfo(ctx context.Context, ip string) (*aws.ENIInfo
 // - Subnet ID filtering (if configured)
 // - Shared ENI detection (if AllowSharedENITagging is false)
 func (r *PodReconciler) validateENI(ctx context.Context, eniInfo *aws.ENIInfo) error {
+	if eniInfo == nil {
+		return fmt.Errorf("ENI info is nil")
+	}
+
 	logger := log.FromContext(ctx)
 
 	// Check subnet filtering
@@ -52,7 +59,8 @@ func (r *PodReconciler) validateENI(ctx context.Context, eniInfo *aws.ENIInfo) e
 			}
 		}
 		if !allowed {
-			return fmt.Errorf("ENI %s subnet %s is not in allowed subnet list [%s]", eniInfo.ID, eniInfo.SubnetID, strings.Join(r.SubnetIDs, ", "))
+			subnetList := utils.BuildCommaSeparatedList(r.SubnetIDs)
+			return fmt.Errorf("ENI %s subnet %s is not in allowed subnet list [%s]", eniInfo.ID, eniInfo.SubnetID, subnetList)
 		}
 	}
 
@@ -77,6 +85,12 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 	lastAppliedValue := pod.Annotations[LastAppliedAnnotationKey]
 	lastAppliedHash := pod.Annotations[LastAppliedHashKey]
 
+	// Determine effective namespace for tag namespacing
+	effectiveNamespace := ""
+	if r.TagNamespace == "enable" {
+		effectiveNamespace = pod.Namespace
+	}
+
 	// Parse and compare tags
 	currentTags, _, diff, err := r.parseAndCompareTags(ctx, pod, annotationValue, lastAppliedValue)
 	if err != nil {
@@ -92,8 +106,22 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 		return fmt.Errorf("hash conflict detected on ENI %s: current hash=%s, our last hash=%s (another controller may be managing this ENI)", eniInfo.ID, eniHash, lastAppliedHash)
 	}
 
-	// If already synced, nothing to do
-	if desiredHash == lastAppliedHash && len(diff.toAdd) == 0 && len(diff.toRemove) == 0 {
+	eniHash := ""
+	if eniInfo != nil && eniInfo.Tags != nil {
+		eniHash = eniInfo.Tags[HashTagKey]
+	}
+
+	// If there are no desired tags, remove the hash tag too so the ENI can be claimed later.
+	// Without this, a stale eni-tagger.io/hash can block future reconciles via checkHashConflict.
+	if len(currentTags) == 0 && eniHash != "" {
+		diff.toRemove = append(diff.toRemove, HashTagKey)
+	}
+
+	hashInSync := (eniHash == desiredHash)
+
+	// If already synced, nothing to do.
+	// When managing tags, also require the ENI hash to match to avoid leaving it stale/missing.
+	if desiredHash == lastAppliedHash && len(diff.toAdd) == 0 && len(diff.toRemove) == 0 && (len(currentTags) == 0 || hashInSync) {
 		logger.Info("Tags already in sync", "eniID", eniInfo.ID)
 		if err := r.updateStatus(ctx, pod, corev1.ConditionTrue, "Synced", fmt.Sprintf("ENI %s tags are up to date", eniInfo.ID)); err != nil {
 			return err
@@ -105,12 +133,15 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 	if r.DryRun {
 		logger.Info("DRY RUN: Would apply tags", "eniID", eniInfo.ID, "toAdd", diff.toAdd, "toRemove", diff.toRemove)
 	} else {
-		// Add hash to tags
-		tagsWithHash := make(map[string]string)
+		// Only write the hash tag when we are actively managing tags.
+		// If the hash is missing/outdated (even when there are no other diffs), ensure it is updated.
+		tagsWithHash := make(map[string]string, len(diff.toAdd)+1)
 		for k, v := range diff.toAdd {
 			tagsWithHash[k] = v
 		}
-		tagsWithHash[HashTagKey] = desiredHash
+		if len(currentTags) > 0 && !hashInSync {
+			tagsWithHash[HashTagKey] = desiredHash
+		}
 
 		// Apply tag changes
 		if len(tagsWithHash) > 0 {
@@ -129,8 +160,8 @@ func (r *PodReconciler) applyENITags(ctx context.Context, pod *corev1.Pod, eniIn
 		r.Recorder.Event(pod, corev1.EventTypeNormal, "TagsApplied", fmt.Sprintf("Applied %d tags to ENI %s", len(currentTags), eniInfo.ID))
 	}
 
-	// Update pod annotations
-	if err := updatePodAnnotations(ctx, r, pod, currentTags, desiredHash); err != nil {
+	// Update pod annotations including the effective namespace for orphaned tag cleanup
+	if err := updatePodAnnotations(ctx, r, pod, currentTags, desiredHash, effectiveNamespace); err != nil {
 		return fmt.Errorf("failed to update pod %s annotations after successful tagging: %w", pod.Name, err)
 	}
 

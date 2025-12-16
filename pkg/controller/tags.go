@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"k8s-eni-tagger/pkg/utils"
 	"sort"
 	"strings"
 )
@@ -29,8 +30,8 @@ func parseTags(tagStr string) (map[string]string, error) {
 	}
 
 	// Add length check to prevent catastrophic backtracking in regex validation
-	if len(tagStr) > 10000 {
-		return nil, fmt.Errorf("annotation value too long (max 10000 chars)")
+	if len(tagStr) > MaxAnnotationValueLength {
+		return nil, fmt.Errorf("annotation value too long (max %d chars)", MaxAnnotationValueLength)
 	}
 
 	var tags map[string]string
@@ -109,15 +110,32 @@ func validateParsedTags(tags map[string]string) (map[string]string, error) {
 // The namespace comes from either the --tag-namespace flag or the pod's Kubernetes namespace.
 // For example, with namespace "acme-corp", the tag "CostCenter=1234" becomes "acme-corp:CostCenter=1234".
 // This provides automatic namespacing for multi-tenant scenarios to prevent tag key conflicts.
-// Validates that resulting keys do not exceed MaxTagKeyLength.
+// Validates that:
+// - The namespace doesn't start with reserved prefixes (aws:, kubernetes.io/cluster/)
+// - The resulting namespaced keys do not exceed MaxTagKeyLength
 func applyNamespace(tags map[string]string, namespace string) (map[string]string, error) {
 	if namespace == "" {
 		return tags, nil
 	}
 
+	// Validate namespace doesn't start with reserved prefixes
+	for _, prefix := range reservedPrefixes {
+		if strings.HasPrefix(namespace, prefix) || strings.HasPrefix(namespace+":", prefix) {
+			return nil, fmt.Errorf("namespace %q would create tags with reserved prefix %q", namespace, prefix)
+		}
+	}
+
 	namespaced := make(map[string]string, len(tags))
 	for key, value := range tags {
-		namespacedKey := namespace + ":" + key
+		namespacedKey := utils.BuildKeyValue(namespace, key, ":")
+
+		// Check for reserved prefixes in the namespaced key
+		for _, prefix := range reservedPrefixes {
+			if strings.HasPrefix(namespacedKey, prefix) {
+				return nil, fmt.Errorf("namespaced tag key %q starts with reserved prefix %q", namespacedKey, prefix)
+			}
+		}
+
 		if len(namespacedKey) > MaxTagKeyLength {
 			return nil, fmt.Errorf("namespaced tag key too long: %q (length %d > %d)", namespacedKey, len(namespacedKey), MaxTagKeyLength)
 		}
@@ -130,7 +148,8 @@ func applyNamespace(tags map[string]string, namespace string) (map[string]string
 // The hash is computed deterministically by sorting keys alphabetically before hashing.
 // This ensures the same set of tags always produces the same hash value.
 // The hash is used to detect conflicts when multiple controllers manage the same ENI.
-// The hash is truncated to 16 characters (64 bits) which is sufficient for collision detection.
+// The hash is truncated to 32 characters (128 bits) for collision resistance.
+// With 128 bits, the birthday paradox collision probability is negligible even at 2^64 operations.
 func computeHash(tags map[string]string) string {
 	keys := make([]string, 0, len(tags))
 	for k := range tags {
@@ -146,5 +165,5 @@ func computeHash(tags map[string]string) string {
 		h.Write([]byte(","))
 	}
 	fullHash := hex.EncodeToString(h.Sum(nil))
-	return fullHash[:16] // 64-bit entropy is sufficient for conflict detection
+	return fullHash[:32] // 128-bit entropy for collision resistance
 }
