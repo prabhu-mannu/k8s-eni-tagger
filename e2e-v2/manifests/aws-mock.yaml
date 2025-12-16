@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-mock
+  namespace: ${CONTROLLER_NAMESPACE}
+  labels:
+    app: aws-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-mock
+  template:
+    metadata:
+      labels:
+        app: aws-mock
+    spec:
+      containers:
+      - name: aws-mock
+        image: ${AWS_MOCK_IMAGE}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 4566
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 2
+          periodSeconds: 3
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-mock
+  namespace: ${CONTROLLER_NAMESPACE}
+  labels:
+    app: aws-mock
+spec:
+  type: ClusterIP
+  selector:
+    app: aws-mock
+  ports:
+  - name: http
+    port: 4566
+    targetPort: http
+    protocol: TCP

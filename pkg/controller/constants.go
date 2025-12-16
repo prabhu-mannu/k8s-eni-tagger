@@ -2,7 +2,11 @@
 // It watches Pod resources and applies tags to their associated ENIs based on annotations.
 package controller
 
-import "regexp"
+import (
+	"context"
+	"regexp"
+	"time"
+)
 
 const (
 	// AnnotationKey is the default annotation key that the controller watches for tag specifications.
@@ -36,6 +40,64 @@ const (
 
 	// MaxTagsPerENI is the maximum number of tags allowed per ENI by AWS (50 tags).
 	MaxTagsPerENI = 50
+
+	// Retry configuration for untag operations
+	// These constants define the exponential backoff retry strategy for AWS untag operations.
+
+	// maxUntagRetries is the maximum number of retry attempts for untag operations.
+	maxUntagRetries = 3
+
+	// initialRetryBackoff is the initial backoff duration before the first retry.
+	initialRetryBackoff = 100 * time.Millisecond
+
+	// retryBackoffMultiplier is the factor by which the backoff duration increases after each retry.
+	retryBackoffMultiplier = 2
+)
+
+// retryWithBackoff executes a function with exponential backoff retry logic.
+// It retries up to maxRetries times with context-aware cancellation support.
+func retryWithBackoff(ctx context.Context, maxRetries int, initialBackoff time.Duration, backoffMultiplier int, operation func() error) error {
+	var lastErr error
+	backoff := initialBackoff
+retryLoop:
+	for i := 0; i < maxRetries; i++ {
+		if err := operation(); err != nil {
+			lastErr = err
+			if i == maxRetries-1 {
+				break
+			}
+			select {
+			case <-time.After(backoff):
+				// continue to next retry
+			case <-ctx.Done():
+				lastErr = ctx.Err()
+				break retryLoop
+			}
+			backoff *= time.Duration(backoffMultiplier)
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	return lastErr
+}
+
+// Logging key constants for consistent structured logging
+const (
+	LogKeyPod           = "pod"
+	LogKeyPodIP         = "podIP"
+	LogKeyPodName       = "podName"
+	LogKeyPodNamespace  = "podNamespace"
+	LogKeyENIID         = "eniID"
+	LogKeyENISubnet     = "eniSubnet"
+	LogKeyTags          = "tags"
+	LogKeyTagCount      = "tagCount"
+	LogKeyAnnotation    = "annotation"
+	LogKeyAnnotationKey = "annotationKey"
+	LogKeyRequeueAfter  = "requeueAfter"
+	LogKeyError         = "error"
+	LogKeyDuration      = "duration"
+	LogKeyOperation     = "operation"
 )
 
 var (
@@ -44,9 +106,10 @@ var (
 
 	// tagKeyPattern is the regex pattern for valid AWS tag keys.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
-	tagKeyPattern = regexp.MustCompile(`^[\w\s._\-:/=+@]{1,127}$`)
+	tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9 +\=._:/@-]{1,127}$`)
 
 	// tagValuePattern is the regex pattern for valid AWS tag values.
 	// AWS allows alphanumeric characters, spaces, and the following: ._-:/=+@
-	tagValuePattern = regexp.MustCompile(`^[\w\s._\-:/=+@]{0,255}$`)
+	// Empty values are allowed (0-255 characters from the allowed character set)
+	tagValuePattern = regexp.MustCompile(`^[a-zA-Z0-9 +\=._:/@-]{0,255}$`)
 )

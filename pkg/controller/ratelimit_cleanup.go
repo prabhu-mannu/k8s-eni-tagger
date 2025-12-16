@@ -1,0 +1,82 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+// StartRateLimiterCleanup starts a background goroutine that periodically cleans up
+// stale pod rate limiters that haven't been accessed for RateLimiterCleanupThreshold duration.
+// This prevents memory leaks from deleted pods whose rate limiters remain in the map.
+func (r *PodReconciler) StartRateLimiterCleanup(ctx context.Context, interval time.Duration) {
+	if interval <= 0 || r.PodRateLimitQPS <= 0 {
+		log.FromContext(ctx).Info("Rate limiter cleanup disabled",
+			"interval", interval, "podRateLimitQPS", r.PodRateLimitQPS)
+		return // Cleanup disabled
+	}
+
+	logger := log.FromContext(ctx).WithName("rate-limiter-cleanup")
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+		logger.Info("Starting rate limiter cleanup", "interval", interval)
+
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Info("Stopping rate limiter cleanup")
+				return
+			case <-ticker.C:
+				r.cleanupStaleLimiters(ctx)
+			}
+		}
+	}()
+}
+
+// cleanupStaleLimiters removes rate limiters that haven't been accessed for the cleanup threshold
+func (r *PodReconciler) cleanupStaleLimiters(ctx context.Context) {
+	logger := log.FromContext(ctx).WithName("rate-limiter-cleanup")
+
+	if r.RateLimiterCleanupThreshold <= 0 {
+		logger.V(1).Info("Rate limiter cleanup disabled (threshold not set)")
+		return
+	}
+
+	removed := 0
+
+	r.PodRateLimiters.Range(func(key, value interface{}) bool {
+		podKey, ok := key.(string)
+		if !ok {
+			logger.Error(nil, "Invalid key type in rate limiter map, removing entry", "key", key, "type", fmt.Sprintf("%T", key))
+			r.PodRateLimiters.Delete(key)
+			removed++
+			return true // continue processing other entries
+		}
+
+		entry, ok := value.(*RateLimiterEntry)
+		if !ok {
+			logger.Error(nil, "Rate limiter map corruption detected: invalid value type, expected *RateLimiterEntry",
+				"key", podKey, "actualType", fmt.Sprintf("%T", value), "actualValue", value)
+			r.PodRateLimiters.Delete(podKey)
+			removed++
+			return true // continue processing other entries
+		}
+
+		lastAccess := entry.GetLastAccess()
+
+		if entry.IsStaleAfter(r.RateLimiterCleanupThreshold) {
+			r.PodRateLimiters.Delete(podKey)
+			removed++
+			logger.V(1).Info("Removed stale rate limiter", "pod", podKey, "lastAccess", lastAccess)
+		}
+		return true
+	})
+
+	if removed > 0 {
+		logger.Info("Cleaned up stale rate limiters", "removed", removed, "threshold", r.RateLimiterCleanupThreshold)
+	}
+}

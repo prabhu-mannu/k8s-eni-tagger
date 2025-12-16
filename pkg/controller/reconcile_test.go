@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -49,7 +51,8 @@ func (m *MockAWSClient) GetEC2Client() *ec2.Client {
 
 func TestReconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
 
 	// Valid annotation string
 	validTags := `{"cost-center":"123","team":"platform"}`
@@ -71,6 +74,41 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			mockSetup: func(m *MockAWSClient) {}, // No calls expected
+		},
+		{
+			name: "Deletion - Untag transient errors with retries",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-delete-retry",
+					Namespace: "default",
+					Annotations: map[string]string{
+						AnnotationKey:            validTags,
+						LastAppliedAnnotationKey: `{"cost-center":"123","team":"platform"}`,
+						LastAppliedHashKey:       "dummy-hash",
+					},
+					Finalizers:        []string{finalizerName},
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "10.0.0.6",
+				},
+			},
+			mockSetup: func(m *MockAWSClient) {
+				m.On("GetENIInfoByIP", mock.Anything, "10.0.0.6").Return(&aws.ENIInfo{
+					ID: "eni-delete-retry",
+					Tags: map[string]string{
+						HashTagKey: "dummy-hash",
+					},
+				}, nil)
+
+				// Simulate two transient failures then success
+				call := m.On("UntagENI", mock.Anything, "eni-delete-retry", mock.MatchedBy(func(keys []string) bool {
+					return true
+				}))
+				call.Return(errors.New("transient error")).Once()
+				call.Return(errors.New("transient error")).Once()
+				call.Return(nil).Once()
+			},
 		},
 		{
 			name: "No IP - Skip",
@@ -112,7 +150,8 @@ func TestReconcile(t *testing.T) {
 			verify: func(t *testing.T, k8sClient client.Client, m *MockAWSClient) {
 				// Check finalizer added
 				pod := &corev1.Pod{}
-				k8sClient.Get(context.Background(), client.ObjectKey{Name: "pod-success", Namespace: "default"}, pod)
+				err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "pod-success", Namespace: "default"}, pod)
+				require.NoError(t, err)
 				assert.Contains(t, pod.Finalizers, finalizerName)
 			},
 		},
@@ -327,11 +366,14 @@ func TestReconcile(t *testing.T) {
 			recorder := record.NewFakeRecorder(10)
 
 			r := &PodReconciler{
-				Client:        k8sClient,
-				Scheme:        scheme,
-				Recorder:      recorder,
-				AWSClient:     mockAWS,
-				AnnotationKey: AnnotationKey,
+				Client:            k8sClient,
+				Scheme:            scheme,
+				Recorder:          recorder,
+				AWSClient:         mockAWS,
+				AnnotationKey:     AnnotationKey,
+				PodRateLimiters:   &sync.Map{},
+				PodRateLimitQPS:   0.1,
+				PodRateLimitBurst: 1,
 			}
 			// Enable namespacing for transition test
 			if tt.name == "Transition from non-namespaced to namespaced tags" {
@@ -364,4 +406,120 @@ func TestReconcile(t *testing.T) {
 			mockAWS.AssertExpectations(t)
 		})
 	}
+}
+
+func TestReconcileRateLimiting(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	// Create a pod with valid annotation and finalizer already added
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-rate-limit",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationKey: `{"cost-center":"123","team":"platform"}`,
+			},
+			Finalizers: []string{finalizerName},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.0.0.1",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	mockAWS := &MockAWSClient{}
+
+	r := &PodReconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   0.1, // Very low QPS for testing
+		PodRateLimitBurst: 1,
+		Recorder:          record.NewFakeRecorder(10),
+	}
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+		},
+	}
+
+	// First reconcile should succeed (within rate limit)
+	mockAWS.On("GetENIInfoByIP", mock.Anything, "10.0.0.1").Return(&aws.ENIInfo{
+		ID: "eni-rate-limit",
+	}, nil).Once()
+	mockAWS.On("TagENI", mock.Anything, "eni-rate-limit", mock.Anything).Return(nil).Once()
+
+	res1, err1 := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err1)
+	assert.Zero(t, res1.RequeueAfter) // Should not requeue
+
+	// Second reconcile immediately after should be rate limited
+	res2, err2 := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err2)
+	assert.NotZero(t, res2.RequeueAfter) // Should requeue due to rate limiting
+
+	// Verify that AWS calls were only made once (first reconcile)
+	mockAWS.AssertExpectations(t)
+}
+
+func TestReconcileRateLimiterInitError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := corev1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	// Create a pod with valid annotation
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-rate-init-error",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationKey: `{"cost-center":"123","team":"platform"}`,
+			},
+			Finalizers: []string{finalizerName},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.0.0.1",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	mockAWS := &MockAWSClient{}
+
+	r := &PodReconciler{
+		Client:            k8sClient,
+		Scheme:            scheme,
+		AWSClient:         mockAWS,
+		AnnotationKey:     AnnotationKey,
+		PodRateLimiters:   &sync.Map{},
+		PodRateLimitQPS:   10.0, // Valid QPS
+		PodRateLimitBurst: 0,    // Invalid: burst must be at least 1
+		Recorder:          record.NewFakeRecorder(10),
+	}
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+		},
+	}
+
+	// Reconciliation should succeed despite rate limiter init failure
+	// Rate limiting should be gracefully skipped
+	mockAWS.On("GetENIInfoByIP", mock.Anything, "10.0.0.1").Return(&aws.ENIInfo{
+		ID: "eni-rate-init-error",
+	}, nil).Once()
+	mockAWS.On("TagENI", mock.Anything, "eni-rate-init-error", mock.Anything).Return(nil).Once()
+
+	res, err := r.Reconcile(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Zero(t, res.RequeueAfter) // Should not requeue (no rate limiting)
+
+	// Verify that AWS calls were made (rate limiting was skipped due to init error)
+	mockAWS.AssertExpectations(t)
 }

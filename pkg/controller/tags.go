@@ -28,6 +28,11 @@ func parseTags(tagStr string) (map[string]string, error) {
 		return make(map[string]string), nil
 	}
 
+	// Add length check to prevent catastrophic backtracking in regex validation
+	if len(tagStr) > 10000 {
+		return nil, fmt.Errorf("annotation value too long (max 10000 chars)")
+	}
+
 	var tags map[string]string
 
 	// Try JSON format first (most common for structured data)
@@ -49,7 +54,6 @@ func parseTags(tagStr string) (map[string]string, error) {
 		if key == "" {
 			return nil, fmt.Errorf("empty tag key in: %q", pair)
 		}
-		tags[key] = value
 		tags[key] = value
 	}
 

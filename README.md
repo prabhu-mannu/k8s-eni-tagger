@@ -84,8 +84,8 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--watch-namespace`           | `""` (all)           | Namespace to watch. If empty, watches all.                                   |
 | `--max-concurrent-reconciles` | `1`                  | Number of concurrent worker threads.                                         |
 | `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).                                        |
-| `--metrics-bind-address`      | `:8090`              | Address to bind Prometheus metrics.                                          |
-| `--health-probe-bind-address` | `:8081`              | Address to bind health probes.                                               |
+| `--metrics-bind-address`      | `8090`               | Port or address for Prometheus metrics. Bare ports are auto-prefixed with `0.0.0.0:`. |
+| `--health-probe-bind-address` | `8081`               | Port or address for health probes. Bare ports are auto-prefixed with `0.0.0.0:`.    |
 | `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs.                                  |
 | `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs.                                                |
 | `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching.                                                |
@@ -94,8 +94,25 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
 | `--tag-namespace`             | `""` (disabled)      | Control automatic pod namespace-based tag namespacing. Set to 'enable' to use the pod's Kubernetes namespace as tag prefix. Any other value disables namespacing. |
+| `--pod-rate-limit-qps`        | `0.1`                | Per-pod reconciliation rate limit (requests per second).                     |
+| `--pod-rate-limit-burst`      | `1`                  | Burst size for per-pod rate limiter.                                         |
+| `--rate-limiter-cleanup-interval` | `1m`             | Interval for pruning stale per-pod rate limiters.                            |
 
 ---
+
+### Environment variable fallbacks
+
+Most CLI flags can be set via environment variables using the `ENI_TAGGER_` prefix. For example:
+
+- `--dry-run` -> `ENI_TAGGER_DRY_RUN=true`
+- `--metrics-bind-address` -> `ENI_TAGGER_METRICS_BIND_ADDRESS="8090"`
+- `--aws-rate-limit-qps` -> `ENI_TAGGER_AWS_RATE_LIMIT_QPS=20`
+
+Rules:
+- CLI flags take precedence over environment variables.
+- If the CLI flag is not supplied and an env var is present, the env value is used.
+- Subnet IDs can also be set via `ENI_TAGGER_SUBNET_IDS` (comma-separated list).
+
 
 ## Enabling Namespace Tagging on Existing Deployments
 
@@ -380,10 +397,38 @@ eksctl create iamserviceaccount \
 
 ---
 
+## Testing
+
+### Unit Tests
+
+```bash
+make test
+```
+
+### E2E Tests
+
+Run end-to-end tests in a self-contained Docker Compose environment with mocked AWS and Kubernetes:
+
+```bash
+# Quick start
+make e2e
+
+# Or with more control
+cd e2e/compose
+docker compose up --build --abort-on-container-exit
+docker compose down -v
+```
+
+See [E2E Quick Start Guide](e2e/QUICKSTART.md) and [E2E Documentation](e2e/README.md) for details.
+
+---
+
 ## Resources
 - [IAM Policy Template](iam-policy.json)
 - [Helm Chart Documentation](charts/k8s-eni-tagger/README.md)
 - [Architecture Details](ARCHITECTURE.md)
+- [E2E Testing Guide](e2e/README.md)
+- [E2E Quick Start](e2e/QUICKSTART.md)
 - [AWS Tagging Best Practices](docs/AWS_TAGGING_BEST_PRACTICES.md)
 - [Annotation Format Research](docs/ANNOTATION_FORMAT_RESEARCH.md)
 - [Changelog](CHANGELOG.md)

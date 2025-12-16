@@ -107,10 +107,10 @@ config:
   maxConcurrentReconciles: 1
   # Enable dry-run mode (no AWS changes)
   dryRun: false
-  # Metrics bind address (format: :port or 0 to disable)
-  metricsBindAddress: ":8090"
-  # Health probe bind address
-  healthProbeBindAddress: ":8081"
+  # Metrics bind port (controller will auto-prefix with ':') or full address
+  metricsBindAddress: "8090"
+  # Health probe bind port (controller will auto-prefix with ':') or full address
+  healthProbeBindAddress: "8081"
   # Comma-separated list of allowed Subnet IDs (or set via ENI_TAGGER_SUBNET_IDS env var)
   subnetIDs: ""
   # Allow tagging of shared ENIs (e.g., standard EKS nodes). Use with caution
@@ -131,6 +131,19 @@ config:
   # Tag namespacing control. Set to 'enable' to automatically prefix tags with pod's Kubernetes namespace.
   # Any other value (including empty) disables namespacing.
   tagNamespace: ""
+  # Per-pod reconciliation rate limit (requests per second). Default 0.1 = 1 every 10 seconds per pod.
+  podRateLimitQPS: 0.1
+  # Per-pod rate limit burst size.
+  podRateLimitBurst: 1
+  # Interval to clean up stale per-pod rate limiters.
+  rateLimiterCleanupInterval: 1m
+
+# ConfigMap used to pass ENI_TAGGER_* env variables. The chart will create a
+# generated ConfigMap by default containing values from `.Values.config` and
+# `.Values.env`. Set `create` to false to disable generation and provide your
+# own ConfigMap via `envFrom` or `env` values.
+configMap:
+  create: true
 
 # Extra environment variables (Map format for easier --set)
 # Example:

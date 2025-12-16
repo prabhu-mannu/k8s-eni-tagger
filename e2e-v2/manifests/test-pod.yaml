@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-eni-tagger-pod
+  namespace: ${CONTROLLER_NAMESPACE}
+  annotations:
+    ${ANNOTATION_KEY}: '${ANNOTATION_VALUE_JSON}'
+spec:
+  restartPolicy: Never
+  containers:
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - containerPort: 80

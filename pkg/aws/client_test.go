@@ -3,13 +3,16 @@ package aws
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // mockEC2Client is a mock implementation of EC2API
@@ -129,9 +132,12 @@ func TestGetENIInfoByIP(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
 			info, err := c.GetENIInfoByIP(ctx, tt.ip)
@@ -193,12 +199,15 @@ func TestTagENI(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
-			err := c.TagENI(ctx, tt.eniID, tt.tags)
+			err = c.TagENI(ctx, tt.eniID, tt.tags)
 
 			if tt.expectedError != "" {
 				assert.ErrorContains(t, err, tt.expectedError)
@@ -245,12 +254,15 @@ func TestUntagENI(t *testing.T) {
 			mockClient := new(mockEC2Client)
 			tt.mockSetup(mockClient)
 
+			rl, err := newRateLimiter(10, 20)
+			require.NoError(t, err)
+
 			c := &defaultClient{
 				ec2Client:   mockClient,
-				rateLimiter: newRateLimiter(10, 20),
+				rateLimiter: rl,
 			}
 
-			err := c.UntagENI(ctx, tt.eniID, tt.keys)
+			err = c.UntagENI(ctx, tt.eniID, tt.keys)
 
 			if tt.expectedError != "" {
 				assert.ErrorContains(t, err, tt.expectedError)
@@ -269,36 +281,125 @@ func TestRateLimitConfig(t *testing.T) {
 }
 
 func TestRateLimiter(t *testing.T) {
-	// Create a limiter with small capacity to test waiting
-	rl := newRateLimiter(10, 1) // 10 QPS, burst 1
-	ctx := context.Background()
+	// Use a very low QPS to make waits deterministic in tests.
+	// After consuming the initial burst token, the next token should take ~10s.
+	rl, err := newRateLimiter(0.1, 1) // 0.1 QPS, burst 1
+	require.NoError(t, err)
 
-	// 1. First token should be available immediately
-	err := rl.Wait(ctx)
+	// 1. First token should be available immediately (burst).
+	err = rl.Wait(context.Background())
 	assert.NoError(t, err)
+	assert.Less(t, rl.Tokens(), 1.0)
 
-	// 2. Second token needs waiting
-	// check if tokens are depleted
-	assert.Less(t, rl.tokens, 1.0)
-
-	// Test cancellation
-	ctxCancel, cancel := context.WithCancel(context.Background())
-	cancel()
-	err = rl.Wait(ctxCancel)
+	// 2. Next token should not arrive before a short timeout.
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = rl.Wait(ctxTimeout)
 	assert.Error(t, err)
-	assert.Equal(t, context.Canceled, err)
+	assert.Contains(t, err.Error(), "exceed context deadline")
+
+	// 3. Cancellation should be respected while waiting.
+	ctxCancel, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	err = rl.Wait(ctxCancel)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRateLimiterSafetyChecks(t *testing.T) {
+	t.Run("negative refillRate rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(-1, 10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "qps must be positive")
+	})
+
+	t.Run("zero refillRate rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(0, 10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "qps must be positive")
+	})
+
+	t.Run("zero burst rejected by constructor", func(t *testing.T) {
+		_, err := newRateLimiter(1, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "burst must be at least 1")
+	})
 }
 
 func TestConstructors(t *testing.T) {
 	// Test GetEC2Client with mock (should return nil as it's not *ec2.Client)
 	mockClient := new(mockEC2Client)
+	rl, err := newRateLimiter(10, 20)
+	require.NoError(t, err)
 	c := &defaultClient{
 		ec2Client:   mockClient,
-		rateLimiter: newRateLimiter(10, 20),
+		rateLimiter: rl,
 	}
 	assert.Nil(t, c.GetEC2Client())
 
 	// Test real client wrapper
 	// We won't call NewClient here to avoid AWS config loading issues in test environment
 	// but we can test the structure if we manually assemble it or mock config loading
+}
+func TestNewClientWithEndpointOverride(t *testing.T) {
+	// Test that AWS_ENDPOINT_URL environment variable is properly handled
+	// This is a behavioral test - we verify the code path doesn't panic
+	// Actual endpoint behavior is tested in E2E tests
+
+	tests := []struct {
+		name        string
+		endpointEnv string
+		shouldWork  bool
+	}{
+		{
+			name:        "No endpoint override",
+			endpointEnv: "",
+			shouldWork:  true,
+		},
+		{
+			name:        "With endpoint override",
+			endpointEnv: "http://localhost:5000",
+			shouldWork:  true,
+		},
+		{
+			name:        "With https endpoint",
+			endpointEnv: "https://mock-aws.example.com",
+			shouldWork:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original env var
+			originalEnv := os.Getenv("AWS_ENDPOINT_URL")
+			defer func() {
+				if originalEnv != "" {
+					os.Setenv("AWS_ENDPOINT_URL", originalEnv)
+				} else {
+					os.Unsetenv("AWS_ENDPOINT_URL")
+				}
+			}()
+
+			// Set test endpoint
+			if tt.endpointEnv != "" {
+				os.Setenv("AWS_ENDPOINT_URL", tt.endpointEnv)
+			} else {
+				os.Unsetenv("AWS_ENDPOINT_URL")
+			}
+
+			// This will fail in test environment due to missing AWS credentials,
+			// but we're testing that the endpoint override logic doesn't panic
+			// The actual functionality is validated in E2E tests
+			ctx := context.Background()
+			_, err := NewClient(ctx)
+
+			// We expect an error (no AWS credentials in test env)
+			// but NOT a panic or nil pointer error
+			if err != nil {
+				// Error is expected in test environment
+				// Just ensure it's not a panic or programming error
+				assert.NotContains(t, err.Error(), "panic")
+				assert.NotContains(t, err.Error(), "nil pointer")
+			}
+		})
+	}
 }

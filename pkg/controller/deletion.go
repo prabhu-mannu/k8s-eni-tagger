@@ -4,11 +4,48 @@ import (
 	"context"
 	"encoding/json"
 
+	"k8s-eni-tagger/pkg/aws"
+
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// cleanupTagsForPod performs tag cleanup for a pod during deletion.
+// It removes tags from the ENI if the hash matches or shared tagging is allowed.
+func (r *PodReconciler) cleanupTagsForPod(ctx context.Context, logger logr.Logger, eniInfo *aws.ENIInfo, lastAppliedTags map[string]string, lastAppliedHash string) {
+	// Safety check for deletion
+	// Only delete if we own the hash (or if hash is missing/empty?)
+	// If hash on ENI matches our last applied hash, we own it.
+	eniHash := eniInfo.Tags[HashTagKey]
+	shouldDelete := false
+
+	if eniHash == lastAppliedHash {
+		shouldDelete = true
+	} else if r.AllowSharedENITagging {
+		shouldDelete = true
+	}
+
+	if !shouldDelete {
+		logger.Info("Skipping cleanup: ENI hash mismatch", "eniID", eniInfo.ID, "eniHash", eniHash, "myHash", lastAppliedHash)
+		return
+	}
+
+	tagKeys := make([]string, 0, len(lastAppliedTags))
+	for k := range lastAppliedTags {
+		tagKeys = append(tagKeys, k)
+	}
+	// Also remove the hash tag
+	tagKeys = append(tagKeys, HashTagKey)
+
+	if err := r.retryUntagENI(ctx, eniInfo.ID, tagKeys); err != nil {
+		logger.Error(err, "Failed to cleanup tags, continuing with finalizer removal")
+	} else {
+		logger.Info("Cleaned up tags on pod deletion", "eniID", eniInfo.ID, "tags", tagKeys)
+	}
+}
 
 // handlePodDeletion handles cleanup when a pod is being deleted.
 // It removes tags from the ENI if the pod has last-applied-tags and the hash matches,
@@ -35,40 +72,15 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, pod *corev1.Pod) 
 
 	if lastAppliedValue != "" && pod.Status.PodIP != "" {
 		var lastAppliedTags map[string]string
-		if err := json.Unmarshal([]byte(lastAppliedValue), &lastAppliedTags); err == nil {
+		if err := json.Unmarshal([]byte(lastAppliedValue), &lastAppliedTags); err != nil {
+			logger.Error(err, "Failed to unmarshal last-applied-tags annotation, skipping cleanup", "annotation", LastAppliedAnnotationKey)
+		} else {
 			if len(lastAppliedTags) > 0 {
 				eniInfo, err := r.AWSClient.GetENIInfoByIP(ctx, pod.Status.PodIP)
 				if err != nil {
 					logger.Error(err, "Failed to get ENI for cleanup, continuing with finalizer removal")
 				} else {
-					// Safety check for deletion too
-					// Only delete if we own the hash (or if hash is missing/empty?)
-					// If hash on ENI matches our last applied hash, we own it.
-					eniHash := eniInfo.Tags[HashTagKey]
-					shouldDelete := false
-
-					if eniHash == lastAppliedHash {
-						shouldDelete = true
-					} else if r.AllowSharedENITagging {
-						shouldDelete = true
-					}
-
-					if !shouldDelete {
-						logger.Info("Skipping cleanup: ENI hash mismatch", "eniID", eniInfo.ID, "eniHash", eniHash, "myHash", lastAppliedHash)
-					} else {
-						tagKeys := make([]string, 0, len(lastAppliedTags))
-						for k := range lastAppliedTags {
-							tagKeys = append(tagKeys, k)
-						}
-						// Also remove the hash tag
-						tagKeys = append(tagKeys, HashTagKey)
-
-						if err := r.AWSClient.UntagENI(ctx, eniInfo.ID, tagKeys); err != nil {
-							logger.Error(err, "Failed to cleanup tags, continuing with finalizer removal")
-						} else {
-							logger.Info("Cleaned up tags on pod deletion", "eniID", eniInfo.ID, "tags", tagKeys)
-						}
-					}
+					r.cleanupTagsForPod(ctx, logger, eniInfo, lastAppliedTags, lastAppliedHash)
 				}
 			}
 		}

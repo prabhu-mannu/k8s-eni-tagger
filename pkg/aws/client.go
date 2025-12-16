@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"k8s-eni-tagger/pkg/metrics"
@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"golang.org/x/time/rate"
 )
 
 // EC2API defines the interface for EC2 operations used by this package
@@ -40,8 +41,121 @@ type Client interface {
 	GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error)
 	TagENI(ctx context.Context, eniID string, tags map[string]string) error
 	UntagENI(ctx context.Context, eniID string, tagKeys []string) error
-	// GetEC2Client returns the underlying EC2 client for sharing with other components
 	GetEC2Client() *ec2.Client
+}
+
+// AWSErrorCategory represents different categories of AWS errors
+type AWSErrorCategory int
+
+const (
+	// AWSErrorUnknown - Unrecognized error
+	AWSErrorUnknown AWSErrorCategory = iota
+	// AWSErrorNotFound - Resource not found (permanent)
+	AWSErrorNotFound
+	// AWSErrorPermission - Permission/authorization error (permanent)
+	AWSErrorPermission
+	// AWSErrorRateLimit - Rate limiting/throttling (transient, retry)
+	AWSErrorRateLimit
+	// AWSErrorTemporary - Temporary/transient error (retry)
+	AWSErrorTemporary
+	// AWSErrorInvalidInput - Invalid input parameters (permanent)
+	AWSErrorInvalidInput
+)
+
+// AWSErrorInfo contains categorized error information
+type AWSErrorInfo struct {
+	Category    AWSErrorCategory
+	ErrorCode   string
+	Message     string
+	IsRetryable bool
+}
+
+// categorizeAWSError analyzes an AWS error and returns categorized information
+func categorizeAWSError(err error) AWSErrorInfo {
+	if err == nil {
+		return AWSErrorInfo{Category: AWSErrorUnknown, IsRetryable: false}
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return AWSErrorInfo{
+			Category:    AWSErrorUnknown,
+			Message:     err.Error(),
+			IsRetryable: false, // Unknown errors are not retryable by default
+		}
+	}
+
+	errorCode := apiErr.ErrorCode()
+	message := apiErr.Error()
+
+	// Categorize based on error code
+	switch errorCode {
+	// Not found errors (permanent)
+	case "InvalidNetworkInterfaceID.NotFound", "InvalidSubnetID.NotFound", "InvalidVpcID.NotFound":
+		return AWSErrorInfo{
+			Category:    AWSErrorNotFound,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Permission errors (permanent)
+	case "UnauthorizedOperation", "AccessDenied", "Forbidden":
+		return AWSErrorInfo{
+			Category:    AWSErrorPermission,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Rate limiting errors (transient, retry)
+	case "RequestLimitExceeded", "ThrottlingException", "Throttling", "TooManyRequestsException":
+		return AWSErrorInfo{
+			Category:    AWSErrorRateLimit,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: true,
+		}
+
+	// Invalid input errors (permanent)
+	case "InvalidParameterValue", "InvalidParameterCombination", "ValidationException":
+		return AWSErrorInfo{
+			Category:    AWSErrorInvalidInput,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false,
+		}
+
+	// Temporary/transient errors (retry)
+	case "InternalError", "ServiceUnavailable", "InternalFailure", "Unavailable":
+		return AWSErrorInfo{
+			Category:    AWSErrorTemporary,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: true,
+		}
+
+	default:
+		// Check for rate limiting patterns in error message
+		if strings.Contains(strings.ToLower(message), "rate limit") ||
+			strings.Contains(strings.ToLower(message), "throttl") ||
+			strings.Contains(strings.ToLower(message), "too many requests") {
+			return AWSErrorInfo{
+				Category:    AWSErrorRateLimit,
+				ErrorCode:   errorCode,
+				Message:     message,
+				IsRetryable: true,
+			}
+		}
+
+		// Default to unknown
+		return AWSErrorInfo{
+			Category:    AWSErrorUnknown,
+			ErrorCode:   errorCode,
+			Message:     message,
+			IsRetryable: false, // Conservative default
+		}
+	}
 }
 
 // RateLimitConfig configures rate limiting for AWS API calls
@@ -61,57 +175,20 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
+func newRateLimiter(qps float64, burst int) (*rate.Limiter, error) {
+	if qps <= 0 {
+		return nil, fmt.Errorf("rate limiter qps must be positive: %f", qps)
+	}
+	if burst < 1 {
+		return nil, fmt.Errorf("rate limiter burst must be at least 1: %d", burst)
+	}
+
+	return rate.NewLimiter(rate.Limit(qps), burst), nil
+}
+
 type defaultClient struct {
 	ec2Client   EC2API
-	rateLimiter *rateLimiter
-}
-
-// rateLimiter implements a token bucket rate limiter
-type rateLimiter struct {
-	tokens     float64
-	maxTokens  float64
-	refillRate float64 // tokens per second
-	lastRefill time.Time
-	mu         sync.Mutex
-}
-
-func newRateLimiter(qps float64, burst int) *rateLimiter {
-	return &rateLimiter{
-		tokens:     float64(burst),
-		maxTokens:  float64(burst),
-		refillRate: qps,
-		lastRefill: time.Now(),
-	}
-}
-
-func (r *rateLimiter) Wait(ctx context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Refill tokens based on elapsed time
-	now := time.Now()
-	elapsed := now.Sub(r.lastRefill).Seconds()
-	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
-	r.lastRefill = now
-
-	if r.tokens >= 1 {
-		r.tokens--
-		return nil
-	}
-
-	// Calculate wait time for next token
-	waitTime := time.Duration((1-r.tokens)/r.refillRate*1000) * time.Millisecond
-	r.mu.Unlock()
-
-	select {
-	case <-ctx.Done():
-		r.mu.Lock()
-		return ctx.Err()
-	case <-time.After(waitTime):
-		r.mu.Lock()
-		r.tokens = 0 // Reset after wait
-		return nil
-	}
+	rateLimiter *rate.Limiter
 }
 
 // NewClient creates a new AWS client with default rate limiting
@@ -129,13 +206,26 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 	// Set custom User-Agent
 	cfg.AppID = "k8s-eni-tagger"
 
+	limiter, err := newRateLimiter(rlConfig.QPS, rlConfig.Burst)
+	if err != nil {
+		return nil, err
+	}
+
+	// Support custom AWS endpoint for testing/mocking
+	// Check AWS_ENDPOINT_URL environment variable
+	ec2Options := []func(*ec2.Options){}
+	if endpoint := os.Getenv("AWS_ENDPOINT_URL"); endpoint != "" {
+		ec2Options = append(ec2Options, func(o *ec2.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+	}
+
 	return &defaultClient{
-		ec2Client:   ec2.NewFromConfig(cfg),
-		rateLimiter: newRateLimiter(rlConfig.QPS, rlConfig.Burst),
+		ec2Client:   ec2.NewFromConfig(cfg, ec2Options...),
+		rateLimiter: limiter,
 	}, nil
 }
 
-// GetEC2Client returns the underlying EC2 client for sharing with other components
 // GetEC2Client returns the underlying EC2 client for sharing with other components
 // Note: This now returns an interface, callers may need to type assert if they need the specific struct
 // but for general usage the interface should suffice if extended.
@@ -177,7 +267,17 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	result, err := c.ec2Client.DescribeNetworkInterfaces(ctx, input)
 	if err != nil {
 		status = "error"
-		return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorPermission:
+			return nil, fmt.Errorf("insufficient permissions to describe network interfaces (check ec2:DescribeNetworkInterfaces): %w", err)
+		case AWSErrorRateLimit:
+			return nil, fmt.Errorf("aws throttling while describing network interfaces: %w", err)
+		case AWSErrorTemporary:
+			return nil, fmt.Errorf("temporary aws error while describing network interfaces: %w", err)
+		default:
+			return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
+		}
 	}
 
 	if len(result.NetworkInterfaces) == 0 {
@@ -195,8 +295,8 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	}
 
 	info := &ENIInfo{
-		ID:            *eni.NetworkInterfaceId,
-		SubnetID:      *eni.SubnetId,
+		ID:            aws.ToString(eni.NetworkInterfaceId),
+		SubnetID:      aws.ToString(eni.SubnetId),
 		InterfaceType: string(eni.InterfaceType),
 		Description:   aws.ToString(eni.Description),
 		Tags:          tags,
@@ -262,17 +362,17 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 	_, err := c.ec2Client.CreateTags(ctx, input)
 	if err != nil {
 		status = "error"
-
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.ErrorCode() {
-			case "InvalidNetworkInterfaceID.NotFound":
-				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
-			case "UnauthorizedOperation":
-				return fmt.Errorf("insufficient permissions to tag ENI %s (check ec2:CreateTags): %w", eniID, err)
-			}
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorNotFound:
+			return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
+		case AWSErrorPermission:
+			return fmt.Errorf("insufficient permissions to tag ENI %s (check ec2:CreateTags): %w", eniID, err)
+		case AWSErrorInvalidInput:
+			return fmt.Errorf("invalid tag request for ENI %s: %w", eniID, err)
+		default:
+			return fmt.Errorf("failed to tag ENI %s: %w", eniID, err)
 		}
-		return fmt.Errorf("failed to tag ENI %s: %w", eniID, err)
 	}
 
 	return nil
@@ -312,17 +412,17 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 	_, err := c.ec2Client.DeleteTags(ctx, input)
 	if err != nil {
 		status = "error"
-
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.ErrorCode() {
-			case "InvalidNetworkInterfaceID.NotFound":
-				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
-			case "UnauthorizedOperation":
-				return fmt.Errorf("insufficient permissions to untag ENI %s (check ec2:DeleteTags): %w", eniID, err)
-			}
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorNotFound:
+			return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
+		case AWSErrorPermission:
+			return fmt.Errorf("insufficient permissions to untag ENI %s (check ec2:DeleteTags): %w", eniID, err)
+		case AWSErrorInvalidInput:
+			return fmt.Errorf("invalid untag request for ENI %s: %w", eniID, err)
+		default:
+			return fmt.Errorf("failed to untag ENI %s: %w", eniID, err)
 		}
-		return fmt.Errorf("failed to untag ENI %s: %w", eniID, err)
 	}
 
 	return nil

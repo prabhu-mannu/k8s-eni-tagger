@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-mock-nodeport
+  namespace: ${CONTROLLER_NAMESPACE}
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 4566
+    targetPort: 4566
+    nodePort: ${AWS_NODEPORT_PORT}
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: aws-mock-nodeport
+  namespace: ${CONTROLLER_NAMESPACE}
+subsets:
+- addresses:
+  - ip: ${AWS_MOCK_IP}
+  ports:
+  - port: 4566
