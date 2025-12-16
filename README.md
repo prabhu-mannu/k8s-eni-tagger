@@ -28,14 +28,14 @@
 
 ```bash
 helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.1 \
+  --version 0.1.3 \
   --namespace kube-system --create-namespace
 ```
 
 Or apply manifests:
 
 ```bash
-kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.1/manifests.yaml
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.3/manifests.yaml
 ```
 
 ---

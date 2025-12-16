@@ -31,7 +31,7 @@ Install directly from GHCR OCI registry:
 
 ```bash
 helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.1 \
+  --version 0.1.3 \
   --namespace kube-system \
   --create-namespace
 ```
@@ -54,7 +54,7 @@ Download from the GitHub release:
 
 ```bash
 helm install k8s-eni-tagger \
-  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.1/k8s-eni-tagger-0.1.1.tgz \
+  https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.3/k8s-eni-tagger-0.1.3.tgz \
   --namespace kube-system \
   --create-namespace
 ```
@@ -63,7 +63,7 @@ helm install k8s-eni-tagger \
 
 ```bash
 helm install k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.1 \
+  --version 0.1.3 \
   --namespace kube-system \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="arn:aws:iam::123456789012:role/k8s-eni-tagger" \
   --set config.enableLeaderElection=true \
@@ -410,7 +410,7 @@ production:CostCenter=123, production:Team=Platform
 
 This chart follows [Semantic Versioning 2.0.0](https://semver.org/):
 
-- **Chart version = App version = Release tag**: All versions are synchronized for simplicity (e.g., chart 0.1.1 = app 0.1.1 = release v0.1.1)
+- **Chart version = App version = Release tag**: All versions are synchronized for simplicity (e.g., chart 0.1.3 = app 0.1.3 = release v0.1.3)
 - **MAJOR** (X.0.0): Breaking changes to chart structure or application behavior
 - **MINOR** (0.X.0): New features added in a backward-compatible manner
 - **PATCH** (0.0.X): Backward-compatible bug fixes
@@ -424,7 +424,7 @@ This chart follows [Semantic Versioning 2.0.0](https://semver.org/):
 ```bash
 # Using OCI Registry (recommended)
 helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.1 \
+  --version 0.1.3 \
   --namespace kube-system \
   --values values.yaml
 
