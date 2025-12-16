@@ -5,3 +5,7 @@ package cache
 
 // configMapPersister is an alias for configMapPersisterSharded
 type configMapPersister = configMapPersisterSharded
+
+// keep a reference to the alias to avoid "type is unused" tooling diagnostics
+// The blank identifier assignment ensures the alias remains in the compiled package
+var _ configMapPersister = configMapPersisterSharded{}

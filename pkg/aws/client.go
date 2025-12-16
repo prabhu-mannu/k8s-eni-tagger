@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"k8s-eni-tagger/pkg/metrics"
@@ -16,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"golang.org/x/time/rate"
 )
 
 // EC2API defines the interface for EC2 operations used by this package
@@ -175,67 +175,20 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-type defaultClient struct {
-	ec2Client   EC2API
-	rateLimiter *rateLimiter
-}
-
-// rateLimiter implements a token bucket rate limiter
-type rateLimiter struct {
-	tokens     float64
-	maxTokens  float64
-	refillRate float64 // tokens per second
-	lastRefill time.Time
-	mu         sync.Mutex
-}
-
-func newRateLimiter(qps float64, burst int) (*rateLimiter, error) {
+func newRateLimiter(qps float64, burst int) (*rate.Limiter, error) {
 	if qps <= 0 {
-		return nil, fmt.Errorf("rate limiter QPS must be positive: %f", qps)
+		return nil, fmt.Errorf("rate limiter qps must be positive: %f", qps)
 	}
 	if burst < 1 {
 		return nil, fmt.Errorf("rate limiter burst must be at least 1: %d", burst)
 	}
-	return &rateLimiter{
-		tokens:     float64(burst),
-		maxTokens:  float64(burst),
-		refillRate: qps,
-		lastRefill: time.Now(),
-	}, nil
+
+	return rate.NewLimiter(rate.Limit(qps), burst), nil
 }
 
-func (r *rateLimiter) Wait(ctx context.Context) error {
-	for {
-		// Acquire lock and refill tokens
-		r.mu.Lock()
-		now := time.Now()
-		elapsed := now.Sub(r.lastRefill).Seconds()
-		r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
-		r.lastRefill = now
-
-		if r.tokens >= 1 {
-			r.tokens--
-			r.mu.Unlock()
-			return nil
-		}
-
-		// Calculate wait time for next token and release lock while waiting
-		// Ensure tokens is non-negative for accurate wait calculation
-		tokensNeeded := 1.0 - max(0, r.tokens)
-		waitTime := time.Duration(tokensNeeded/r.refillRate*1000) * time.Millisecond
-		r.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			// Context canceled while waiting
-			return ctx.Err()
-		case <-time.After(waitTime):
-			// Loop back to refill tokens based on elapsed time during wait
-			// This ensures we account for all elapsed time, even if other goroutines
-			// consumed tokens while we were waiting
-			continue
-		}
-	}
+type defaultClient struct {
+	ec2Client   EC2API
+	rateLimiter *rate.Limiter
 }
 
 // NewClient creates a new AWS client with default rate limiting
@@ -253,9 +206,9 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 	// Set custom User-Agent
 	cfg.AppID = "k8s-eni-tagger"
 
-	rateLimiter, err := newRateLimiter(rlConfig.QPS, rlConfig.Burst)
+	limiter, err := newRateLimiter(rlConfig.QPS, rlConfig.Burst)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
+		return nil, err
 	}
 
 	// Support custom AWS endpoint for testing/mocking
@@ -269,7 +222,7 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 
 	return &defaultClient{
 		ec2Client:   ec2.NewFromConfig(cfg, ec2Options...),
-		rateLimiter: rateLimiter,
+		rateLimiter: limiter,
 	}, nil
 }
 
@@ -314,7 +267,17 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 	result, err := c.ec2Client.DescribeNetworkInterfaces(ctx, input)
 	if err != nil {
 		status = "error"
-		return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorPermission:
+			return nil, fmt.Errorf("insufficient permissions to describe network interfaces (check ec2:DescribeNetworkInterfaces): %w", err)
+		case AWSErrorRateLimit:
+			return nil, fmt.Errorf("aws throttling while describing network interfaces: %w", err)
+		case AWSErrorTemporary:
+			return nil, fmt.Errorf("temporary aws error while describing network interfaces: %w", err)
+		default:
+			return nil, fmt.Errorf("failed to describe network interfaces: %w", err)
+		}
 	}
 
 	if len(result.NetworkInterfaces) == 0 {
@@ -399,17 +362,17 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 	_, err := c.ec2Client.CreateTags(ctx, input)
 	if err != nil {
 		status = "error"
-
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.ErrorCode() {
-			case "InvalidNetworkInterfaceID.NotFound":
-				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
-			case "UnauthorizedOperation":
-				return fmt.Errorf("insufficient permissions to tag ENI %s (check ec2:CreateTags): %w", eniID, err)
-			}
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorNotFound:
+			return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
+		case AWSErrorPermission:
+			return fmt.Errorf("insufficient permissions to tag ENI %s (check ec2:CreateTags): %w", eniID, err)
+		case AWSErrorInvalidInput:
+			return fmt.Errorf("invalid tag request for ENI %s: %w", eniID, err)
+		default:
+			return fmt.Errorf("failed to tag ENI %s: %w", eniID, err)
 		}
-		return fmt.Errorf("failed to tag ENI %s: %w", eniID, err)
 	}
 
 	return nil
@@ -449,17 +412,17 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 	_, err := c.ec2Client.DeleteTags(ctx, input)
 	if err != nil {
 		status = "error"
-
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.ErrorCode() {
-			case "InvalidNetworkInterfaceID.NotFound":
-				return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
-			case "UnauthorizedOperation":
-				return fmt.Errorf("insufficient permissions to untag ENI %s (check ec2:DeleteTags): %w", eniID, err)
-			}
+		awsErr := categorizeAWSError(err)
+		switch awsErr.Category {
+		case AWSErrorNotFound:
+			return fmt.Errorf("ENI %s not found (may have been deleted): %w", eniID, err)
+		case AWSErrorPermission:
+			return fmt.Errorf("insufficient permissions to untag ENI %s (check ec2:DeleteTags): %w", eniID, err)
+		case AWSErrorInvalidInput:
+			return fmt.Errorf("invalid untag request for ENI %s: %w", eniID, err)
+		default:
+			return fmt.Errorf("failed to untag ENI %s: %w", eniID, err)
 		}
-		return fmt.Errorf("failed to untag ENI %s: %w", eniID, err)
 	}
 
 	return nil
