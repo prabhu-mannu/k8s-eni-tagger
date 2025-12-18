@@ -113,3 +113,22 @@ func TestCheck(t *testing.T) {
 	//     // TODO: Implement integration test with real EC2 client
 	// })
 }
+
+func TestAWSChecker_LatchesAfterSuccesses(t *testing.T) {
+	m := new(mockEC2Health)
+	// Expect exactly 3 successful AWS calls, then none afterwards
+	m.On("DescribeAccountAttributes", mock.Anything, mock.Anything, mock.Anything).
+		Return(&ec2.DescribeAccountAttributesOutput{}, nil).Times(3)
+
+	client := &EC2HealthClient{EC2: m}
+	checker := NewAWSChecker(client)
+	req := httptest.NewRequest("GET", "/healthz", nil)
+
+	// Perform 5 checks; the last 2 should be short-circuited without invoking AWS
+	for i := 0; i < 5; i++ {
+		err := checker.Check(req)
+		assert.NoError(t, err)
+	}
+
+	m.AssertExpectations(t)
+}

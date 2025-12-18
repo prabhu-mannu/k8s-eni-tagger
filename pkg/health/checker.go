@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"sync"
+
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
@@ -31,6 +33,10 @@ type AWSChecker struct {
 	timeoutSeconds int
 	maxRetries     int
 	metrics        AWSCheckerMetrics
+	// Latching state to avoid repeated AWS calls after initial success streak
+	mu           sync.Mutex
+	successCount int
+	maxSuccesses int
 }
 
 // AWSCheckerMetrics defines hooks for metrics collection (e.g., Prometheus)
@@ -47,12 +53,12 @@ type AWSCheckerMetrics interface {
 //	err := checker.Check(req)
 func NewAWSChecker(client AWSHealthAPI) *AWSChecker {
 	// Default: 5s timeout, 1 retry
-	return &AWSChecker{client: client, timeoutSeconds: 5, maxRetries: 1, metrics: nil}
+	return &AWSChecker{client: client, timeoutSeconds: 5, maxRetries: 1, metrics: nil, maxSuccesses: 3}
 }
 
 // NewAWSCheckerWithConfig creates a new AWSChecker with custom timeout and retry settings.
 func NewAWSCheckerWithConfig(client AWSHealthAPI, timeoutSeconds, maxRetries int) *AWSChecker {
-	return &AWSChecker{client: client, timeoutSeconds: timeoutSeconds, maxRetries: maxRetries, metrics: nil}
+	return &AWSChecker{client: client, timeoutSeconds: timeoutSeconds, maxRetries: maxRetries, metrics: nil, maxSuccesses: 3}
 }
 
 // Check performs a lightweight AWS API call to verify connectivity.
@@ -63,6 +69,13 @@ func (c *AWSChecker) Check(req *http.Request) error {
 		log.Printf("[AWSChecker] AWS client not configured")
 		return fmt.Errorf("AWS client not configured")
 	}
+	// If we've already achieved the configured number of successes, short-circuit.
+	c.mu.Lock()
+	if c.maxSuccesses > 0 && c.successCount >= c.maxSuccesses {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
 	log.Printf("[AWSChecker] Performing AWS health check via HealthCheck method")
 	ctx, cancel := context.WithTimeout(req.Context(), time.Duration(c.timeoutSeconds)*time.Second)
 	defer cancel()
@@ -76,6 +89,12 @@ func (c *AWSChecker) Check(req *http.Request) error {
 				c.metrics.IncSuccess()
 				c.metrics.ObserveLatency(time.Since(start).Seconds())
 			}
+			// Increment successCount up to maxSuccesses under lock
+			c.mu.Lock()
+			if c.maxSuccesses > 0 && c.successCount < c.maxSuccesses {
+				c.successCount++
+			}
+			c.mu.Unlock()
 			return nil
 		}
 		log.Printf("[AWSChecker] AWS health check failed (attempt %d): %v", attempt+1, err)

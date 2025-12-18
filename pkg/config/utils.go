@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"k8s-eni-tagger/pkg/utils"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -27,5 +27,6 @@ func normalizeBindAddress(value string) (string, error) {
 	if port < 1 || port > 65535 {
 		return "", fmt.Errorf("port number %d out of valid range 1-65535", port)
 	}
-	return utils.BuildKeyValue("0.0.0.0", v, ":"), nil
+	// Use net.JoinHostPort for robust formatting and future-proofing (e.g., IPv6 handling)
+	return net.JoinHostPort("0.0.0.0", v), nil
 }
