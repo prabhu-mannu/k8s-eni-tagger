@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -11,11 +13,13 @@ import (
 	"k8s-eni-tagger/pkg/metrics"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
 	"golang.org/x/time/rate"
+	"math/rand/v2"
 )
 
 // EC2API defines the interface for EC2 operations used by this package
@@ -74,6 +78,15 @@ type AWSErrorInfo struct {
 func categorizeAWSError(err error) AWSErrorInfo {
 	if err == nil {
 		return AWSErrorInfo{Category: AWSErrorUnknown, IsRetryable: false}
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return AWSErrorInfo{
+			Category:    AWSErrorTemporary,
+			Message:     err.Error(),
+			IsRetryable: netErr.Timeout(),
+		}
 	}
 
 	var apiErr smithy.APIError
@@ -191,6 +204,13 @@ type defaultClient struct {
 	rateLimiter *rate.Limiter
 }
 
+const (
+	awsAPIMaxAttempts  = 3
+	awsAPIBaseBackoff  = 100 * time.Millisecond
+	awsAPIMaxBackoff   = 2 * time.Second
+	awsAPIDelayDivisor = 2 // delay range is [backoff/2, backoff]
+)
+
 // NewClient creates a new AWS client with default rate limiting
 func NewClient(ctx context.Context) (Client, error) {
 	return NewClientWithRateLimiter(ctx, DefaultRateLimitConfig())
@@ -214,6 +234,13 @@ func NewClientWithRateLimiter(ctx context.Context, rlConfig RateLimitConfig) (Cl
 	// Support custom AWS endpoint for testing/mocking
 	// Check AWS_ENDPOINT_URL environment variable
 	ec2Options := []func(*ec2.Options){}
+	// We implement our own retry loop that re-enters the rate limiter on each attempt.
+	// To avoid multiplicative retries (SDK retries inside our manual retries), disable SDK retries here.
+	ec2Options = append(ec2Options, func(o *ec2.Options) {
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.MaxAttempts = 1
+		})
+	})
 	if endpoint := os.Getenv("AWS_ENDPOINT_URL"); endpoint != "" {
 		ec2Options = append(ec2Options, func(o *ec2.Options) {
 			o.BaseEndpoint = aws.String(endpoint)
@@ -241,11 +268,6 @@ func (c *defaultClient) GetEC2Client() *ec2.Client {
 
 // GetENIInfoByIP finds the ENI details associated with a private IP address
 func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo, error) {
-	// Rate limit AWS API calls
-	if err := c.rateLimiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter wait: %w", err)
-	}
-
 	start := time.Now()
 	status := "success"
 	defer func() {
@@ -262,9 +284,15 @@ func (c *defaultClient) GetENIInfoByIP(ctx context.Context, ip string) (*ENIInfo
 		},
 	}
 
-	// Retry with exponential backoff
-	// Retry is handled by the AWS SDK default retryer
-	result, err := c.ec2Client.DescribeNetworkInterfaces(ctx, input)
+	var result *ec2.DescribeNetworkInterfacesOutput
+	err := c.doWithRetry(ctx, "DescribeNetworkInterfaces", awsAPIMaxAttempts, func(ctx context.Context) error {
+		if err := c.rateLimiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+		var callErr error
+		result, callErr = c.ec2Client.DescribeNetworkInterfaces(ctx, input)
+		return callErr
+	})
 	if err != nil {
 		status = "error"
 		awsErr := categorizeAWSError(err)
@@ -333,11 +361,6 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 		return nil
 	}
 
-	// Rate limit AWS API calls
-	if err := c.rateLimiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter wait: %w", err)
-	}
-
 	start := time.Now()
 	status := "success"
 	defer func() {
@@ -358,8 +381,13 @@ func (c *defaultClient) TagENI(ctx context.Context, eniID string, tags map[strin
 		Tags:      ec2Tags,
 	}
 
-	// Retry is handled by the AWS SDK default retryer
-	_, err := c.ec2Client.CreateTags(ctx, input)
+	err := c.doWithRetry(ctx, "CreateTags", awsAPIMaxAttempts, func(ctx context.Context) error {
+		if err := c.rateLimiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+		_, callErr := c.ec2Client.CreateTags(ctx, input)
+		return callErr
+	})
 	if err != nil {
 		status = "error"
 		awsErr := categorizeAWSError(err)
@@ -384,11 +412,6 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 		return nil
 	}
 
-	// Rate limit AWS API calls
-	if err := c.rateLimiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter wait: %w", err)
-	}
-
 	start := time.Now()
 	status := "success"
 	defer func() {
@@ -408,8 +431,13 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 		Tags:      ec2Tags,
 	}
 
-	// Retry is handled by the AWS SDK default retryer
-	_, err := c.ec2Client.DeleteTags(ctx, input)
+	err := c.doWithRetry(ctx, "DeleteTags", awsAPIMaxAttempts, func(ctx context.Context) error {
+		if err := c.rateLimiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+		_, callErr := c.ec2Client.DeleteTags(ctx, input)
+		return callErr
+	})
 	if err != nil {
 		status = "error"
 		awsErr := categorizeAWSError(err)
@@ -426,4 +454,37 @@ func (c *defaultClient) UntagENI(ctx context.Context, eniID string, tagKeys []st
 	}
 
 	return nil
+}
+
+func (c *defaultClient) doWithRetry(ctx context.Context, op string, maxAttempts int, call func(context.Context) error) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		callErr := call(ctx)
+		if callErr == nil {
+			return nil
+		}
+		lastErr = callErr
+		awsErr := categorizeAWSError(callErr)
+		if !awsErr.IsRetryable || attempt == maxAttempts-1 {
+			return callErr
+		}
+		// Exponential backoff with jitter, capped (jitter up to 50% of backoff)
+		backoff := awsAPIBaseBackoff << attempt
+		if backoff > awsAPIMaxBackoff {
+			backoff = awsAPIMaxBackoff
+		}
+		half := backoff / awsAPIDelayDivisor
+		jitter := rand.N(half)
+		delay := backoff/2 + jitter
+		log.Printf("[AWSClient] retrying %s (attempt %d/%d): category=%v code=%s delay=%s err=%v", op, attempt+2, maxAttempts, awsErr.Category, awsErr.ErrorCode, delay, callErr)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return lastErr
 }

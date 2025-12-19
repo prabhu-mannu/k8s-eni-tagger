@@ -79,6 +79,17 @@ false
 {{- $_ := set $data "ENI_TAGGER_POD_RATE_LIMIT_QPS" $c.podRateLimitQPS }}
 {{- $_ := set $data "ENI_TAGGER_POD_RATE_LIMIT_BURST" $c.podRateLimitBurst }}
 {{- $_ := set $data "ENI_TAGGER_RATE_LIMITER_CLEANUP_INTERVAL" $c.rateLimiterCleanupInterval }}
+{{- /* AWS health latch max successes: supports 0 to disable latching */}}
+{{- $awsHealthMax := 3 -}}
+{{- if kindIs "invalid" $c.awsHealthMaxSuccesses }}
+  {{- /* Value is not provided, use default of 3 */}}
+{{- else }}
+  {{- $awsHealthMax = $c.awsHealthMaxSuccesses -}}
+{{- end }}
+{{- if lt (int $awsHealthMax) 0 }}
+  {{- $awsHealthMax = 0 -}}
+{{- end }}
+{{- $_ := set $data "ENI_TAGGER_AWS_HEALTH_MAX_SUCCESSES" $awsHealthMax }}
 
 {{- /* Derived leader election: only emit env when it would be true */}}
 {{- if $leader }}
