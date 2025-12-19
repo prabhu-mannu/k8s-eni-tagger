@@ -36,6 +36,10 @@ type Config struct {
 	// The cleanup threshold is automatically set to 5x this interval (threshold = interval * 5).
 	// For example, with a 1m interval, rate limiters unused for 5+ minutes will be cleaned up.
 	RateLimiterCleanupInterval time.Duration `mapstructure:"rate-limiter-cleanup-interval"`
+	// AWSHealthMaxSuccesses controls after how many successful AWS health checks
+	// the checker will latch and stop making further AWS API calls for subsequent probes.
+	// Set to 0 to disable latching (always call AWS API). Must be >= 0.
+	AWSHealthMaxSuccesses int `mapstructure:"aws-health-max-successes"`
 }
 
 // Load parses flags and environment variables to create a Config
@@ -130,6 +134,10 @@ func Load() (*Config, error) {
 	if cfg.AWSRateLimitBurst < 1 {
 		return nil, fmt.Errorf("aws-rate-limit-burst must be at least 1: %d", cfg.AWSRateLimitBurst)
 	}
+	// Validate AWS health check latch threshold
+	if cfg.AWSHealthMaxSuccesses < 0 {
+		return nil, fmt.Errorf("aws-health-max-successes cannot be negative (got %d). Set to 0 to disable latching, or a positive value to enable", cfg.AWSHealthMaxSuccesses)
+	}
 
 	return cfg, nil
 }
@@ -168,6 +176,8 @@ func defineFlags(v *viper.Viper) {
 	pflag.Float64("pod-rate-limit-qps", 0.1, "Per-pod reconciliation rate limit (requests per second). Default 0.1 = 1 reconciliation every 10 seconds per pod.")
 	pflag.Int("pod-rate-limit-burst", 1, "Per-pod rate limit burst size (allows brief bursts above QPS).")
 	pflag.Duration("rate-limiter-cleanup-interval", 1*time.Minute, "Interval for cleaning up stale pod rate limiters (e.g., 1m).")
+	// AWS health check latch successes before skipping AWS calls
+	pflag.Int("aws-health-max-successes", 3, "Number of successful AWS health checks before latching and skipping further AWS API calls for probes. Set to 0 to disable latching.")
 }
 
 func setDefaults(v *viper.Viper) {
@@ -192,4 +202,5 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("pod-rate-limit-qps", 0.1)
 	v.SetDefault("pod-rate-limit-burst", 1)
 	v.SetDefault("rate-limiter-cleanup-interval", 1*time.Minute)
+	v.SetDefault("aws-health-max-successes", 3)
 }

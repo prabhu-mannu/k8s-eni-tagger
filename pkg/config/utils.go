@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -26,5 +27,6 @@ func normalizeBindAddress(value string) (string, error) {
 	if port < 1 || port > 65535 {
 		return "", fmt.Errorf("port number %d out of valid range 1-65535", port)
 	}
-	return "0.0.0.0:" + v, nil
+	// Use net.JoinHostPort for robust formatting (handles edge cases consistently)
+	return net.JoinHostPort("0.0.0.0", v), nil
 }

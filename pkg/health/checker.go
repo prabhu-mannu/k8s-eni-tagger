@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -31,6 +33,11 @@ type AWSChecker struct {
 	timeoutSeconds int
 	maxRetries     int
 	metrics        AWSCheckerMetrics
+	// latch fields to avoid repeated AWS calls after initial successes
+	mu           sync.Mutex
+	callMu       sync.Mutex
+	successCount int
+	maxSuccesses int
 }
 
 // AWSCheckerMetrics defines hooks for metrics collection (e.g., Prometheus)
@@ -47,12 +54,23 @@ type AWSCheckerMetrics interface {
 //	err := checker.Check(req)
 func NewAWSChecker(client AWSHealthAPI) *AWSChecker {
 	// Default: 5s timeout, 1 retry
-	return &AWSChecker{client: client, timeoutSeconds: 5, maxRetries: 1, metrics: nil}
+	return &AWSChecker{client: client, timeoutSeconds: 5, maxRetries: 1, metrics: nil, maxSuccesses: 3}
 }
 
 // NewAWSCheckerWithConfig creates a new AWSChecker with custom timeout and retry settings.
 func NewAWSCheckerWithConfig(client AWSHealthAPI, timeoutSeconds, maxRetries int) *AWSChecker {
-	return &AWSChecker{client: client, timeoutSeconds: timeoutSeconds, maxRetries: maxRetries, metrics: nil}
+	return &AWSChecker{client: client, timeoutSeconds: timeoutSeconds, maxRetries: maxRetries, metrics: nil, maxSuccesses: 3}
+}
+
+// SetMaxSuccesses sets the latch threshold for successful checks before
+// skipping further AWS API calls. Thread-safe.
+func (c *AWSChecker) SetMaxSuccesses(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n < 0 {
+		n = 0
+	}
+	c.maxSuccesses = n
 }
 
 // Check performs a lightweight AWS API call to verify connectivity.
@@ -63,15 +81,43 @@ func (c *AWSChecker) Check(req *http.Request) error {
 		log.Printf("[AWSChecker] AWS client not configured")
 		return fmt.Errorf("AWS client not configured")
 	}
+	// Latch: if we've already had enough successes, skip AWS call
+	c.mu.Lock()
+	if c.maxSuccesses > 0 && c.successCount >= c.maxSuccesses {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+
+	// Serialize AWS calls so that concurrent probes do not exceed the latch threshold.
+	c.callMu.Lock()
+	defer c.callMu.Unlock()
+
+	// Recheck latch after waiting for call lock in case another goroutine already succeeded.
+	c.mu.Lock()
+	if c.maxSuccesses > 0 && c.successCount >= c.maxSuccesses {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+
 	log.Printf("[AWSChecker] Performing AWS health check via HealthCheck method")
 	ctx, cancel := context.WithTimeout(req.Context(), time.Duration(c.timeoutSeconds)*time.Second)
 	defer cancel()
 	var err error
 	start := time.Now()
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+retryLoop:
 	for attempt := 0; attempt < c.maxRetries; attempt++ {
 		err = c.client.HealthCheck(ctx)
 		if err == nil {
 			log.Printf("[AWSChecker] AWS health check succeeded (attempt %d)", attempt+1)
+			// Latch success only after a successful call
+			c.mu.Lock()
+			if c.maxSuccesses > 0 && c.successCount < c.maxSuccesses {
+				c.successCount++
+			}
+			c.mu.Unlock()
 			if c.metrics != nil {
 				c.metrics.IncSuccess()
 				c.metrics.ObserveLatency(time.Since(start).Seconds())
@@ -83,7 +129,17 @@ func (c *AWSChecker) Check(req *http.Request) error {
 		if ctx.Err() != nil {
 			break
 		}
-		// Optionally: add backoff here
+		if attempt < c.maxRetries-1 {
+			backoff := c.computeBackoff(attempt, rng)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				err = ctx.Err()
+				break retryLoop
+			}
+		}
 	}
 	if c.metrics != nil {
 		c.metrics.IncFailure()
@@ -116,6 +172,19 @@ func containsConnectivityError(msg string) bool {
 	return containsAny(msg, []string{"connection refused", "timeout", "no such host", "network unreachable", "dial tcp"})
 }
 
+func (c *AWSChecker) computeBackoff(attempt int, rng *rand.Rand) time.Duration {
+	base := 100 * time.Millisecond
+	max := 2 * time.Second
+	// Exponential backoff capped at max
+	delay := base << attempt
+	if delay > max {
+		delay = max
+	}
+	// Add jitter up to 50% of delay
+	jitter := time.Duration(rng.Int63n(int64(delay / 2)))
+	return delay/2 + jitter
+}
+
 // containsAny returns true if msg contains any of the substrings.
 func containsAny(msg string, substrs []string) bool {
 	for _, s := range substrs {
@@ -129,12 +198,17 @@ func containsAny(msg string, substrs []string) bool {
 // EC2HealthClient implements AWSHealthAPI for EC2
 type EC2HealthClient struct {
 	EC2         EC2HealthAPI
+	mu          sync.Mutex
 	initialized bool
 }
 
 // HealthCheck implements AWSHealthAPI for EC2HealthClient
 func (c *EC2HealthClient) HealthCheck(ctx context.Context) error {
-	if !c.initialized {
+	c.mu.Lock()
+	isInitialized := c.initialized
+	c.mu.Unlock()
+
+	if !isInitialized {
 		if err := c.Validate(); err != nil {
 			return err
 		}
@@ -147,6 +221,9 @@ func (c *EC2HealthClient) HealthCheck(ctx context.Context) error {
 
 // Validate initializes EC2HealthClient and checks if EC2 client is non-nil
 func (c *EC2HealthClient) Validate() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.EC2 == nil {
 		c.initialized = false
 		return fmt.Errorf("EC2 client is nil")
