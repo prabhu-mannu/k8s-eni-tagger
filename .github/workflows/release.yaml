@@ -97,10 +97,6 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Build release notes from CHANGELOG
-        run: |
-          awk 'BEGIN{p=0} index($0,"## [")==1 {if(p){exit} p=1} p{print}' CHANGELOG.md > /tmp/release_notes.md
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -109,4 +105,4 @@ jobs:
             k8s-eni-tagger-linux-arm64
             k8s-eni-tagger-*.tgz
             index.yaml
-          body_path: /tmp/release_notes.md
+          generate_release_notes: true
