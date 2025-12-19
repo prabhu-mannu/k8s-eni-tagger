@@ -99,7 +99,7 @@ jobs:
 
       - name: Build release notes from CHANGELOG
         run: |
-          awk 'BEGIN{p=0} /^## \\[/{if(p==1){exit} p=1} p{print}' CHANGELOG.md > /tmp/release_notes.md
+          awk 'BEGIN{p=0} index($0,"## [")==1 {if(p){exit} p=1} p{print}' CHANGELOG.md > /tmp/release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
