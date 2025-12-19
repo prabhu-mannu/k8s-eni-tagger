@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2025-12-19
+
+### Added
+- Configurable AWS health latch threshold with serialization for concurrent probes.
+- Jittered backoff and retry logging for AWS API calls to improve resiliency and diagnostics.
+- Additional AWS health and client retry tests.
+
+### Changed
+- Disable AWS SDK retries in favor of explicit retry logic with rate limiting per attempt.
+- Helm defaults now include awsHealthMaxSuccesses = 3 with clearer probe configuration docs.
+
+### Fixed
+- Reset AWS health latch on failures to re-detect outages or permission regressions.
+- Validate aws-health-max-successes is non-negative.
+
 ## [0.1.3] - 2025-12-16
 
 ### Fixed
@@ -93,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This project follows [Semantic Versioning 2.0.0](https://semver.org/):
 
-- **Chart version matches release tag**: For simplicity, the Helm chart version is synchronized with the application version and release tag (e.g., chart 0.1.3 = app 0.1.3 = release v0.1.3)
+- **Chart version matches release tag**: For simplicity, the Helm chart version is synchronized with the application version and release tag (e.g., chart 0.1.4 = app 0.1.4 = release v0.1.4)
 - **MAJOR** version (X.0.0): Breaking changes to the API or behavior
 - **MINOR** version (0.X.0): New features added in a backward-compatible manner
 - **PATCH** version (0.0.X): Backward-compatible bug fixes
@@ -105,20 +120,20 @@ This project follows [Semantic Versioning 2.0.0](https://semver.org/):
 ```bash
 # Upgrade to latest version
 helm upgrade k8s-eni-tagger oci://ghcr.io/prabhu-mannu/charts/k8s-eni-tagger \
-  --version 0.1.3 \
+  --version 0.1.4 \
   --namespace kube-system
 ```
 
 ### Using Docker
 
 ```bash
-docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:0.1.3
+docker pull ghcr.io/prabhu-mannu/k8s-eni-tagger:0.1.4
 ```
 
 ### Using kubectl with Manifests
 
 ```bash
-kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.3/manifests.yaml
+kubectl apply -f https://github.com/prabhu-mannu/k8s-eni-tagger/releases/download/v0.1.4/manifests.yaml
 ```
 
 ## Release Process
