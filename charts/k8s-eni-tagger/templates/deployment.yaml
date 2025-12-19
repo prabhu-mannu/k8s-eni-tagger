@@ -73,25 +73,32 @@ spec:
               protocol: TCP
           startupProbe:
             httpGet:
-              path: /healthz
+              path: {{ .Values.health.startup.path | default "/healthz" }}
               port: health
-            failureThreshold: 30
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.health.startup.initialDelaySeconds | default 0 }}
+            periodSeconds: {{ .Values.health.startup.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.health.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.startup.failureThreshold | default 30 }}
             # Gives up to 5 minutes for AWS connectivity validation at startup
             # This runs ONCE to verify AWS API access and IAM permissions
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: {{ .Values.health.liveness.path | default "/healthz" }}
               port: health
-            initialDelaySeconds: 15
-            periodSeconds: 20
+            initialDelaySeconds: {{ .Values.health.liveness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ .Values.health.liveness.periodSeconds | default 20 }}
+            timeoutSeconds: {{ .Values.health.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.liveness.failureThreshold | default 3 }}
             # Simple ping to detect deadlocks, does not call AWS API
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: {{ .Values.health.readiness.path | default "/readyz" }}
               port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.health.readiness.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.health.readiness.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.health.readiness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.readiness.failureThreshold | default 3 }}
+            successThreshold: {{ .Values.health.readiness.successThreshold | default 1 }}
             # Simple ping to check manager readiness, does not call AWS API
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

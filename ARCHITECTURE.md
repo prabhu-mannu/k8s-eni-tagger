@@ -34,15 +34,15 @@ graph TD
     - **Sync**: Calculates the difference between desired tags (annotation) and actual tags (state).
 3.  **AWS Client**: Wrapper around AWS SDK v2 with **Rate Limiting**.
     - Handles API calls (`DescribeNetworkInterfaces`, `CreateTags`, `DeleteTags`).
-    - **Token Bucket Rate Limiter**: Controls QPS to prevent AWS API throttling.
-    - Implements retry logic with exponential backoff.
+    - **Token Bucket Rate Limiter**: Controls QPS to prevent AWS API throttling; every retry attempt re-enters the limiter.
+    - Implements capped exponential backoff with jitter on retryable errors.
     - Instruments metrics for latency and errors.
 4.  **ENI Cache**:
     - Caches ENI IDs resolved from Pod IPs.
     - **Lifecycle-based**: Cache entries are invalidated only when the Pod is deleted (not TTL-based). This ensures consistency and reduces unnecessary AWS API calls.
     - Optional **ConfigMap Persistence**: Preserves cache across controller restarts to reduce API calls on startup.
 5.  **Metrics Server**: Exposes Prometheus metrics (`/metrics`).
-6.  **Health Probes**: Exposes Liveness (`/healthz`) and Readiness (`/readyz`) endpoints.
+6.  **Health Probes**: Exposes Liveness (`/healthz`) and Readiness (`/readyz`) endpoints. AWS connectivity checks latch after a configurable number of successes, serialize concurrent probes, and use jittered backoff on retries.
 
 ## Security & IAM Permissions
 

@@ -10,7 +10,7 @@
 
 - **Automatic ENI Tagging**: Propagate Pod metadata to AWS ENIs for cost, security, and automation.
 - **High Availability**: Leader election, multi-replica support.
-- **Metrics & Health**: Prometheus metrics, readiness/liveness probes.
+- **Metrics & Health**: Prometheus metrics, readiness/liveness probes, AWS health checks with latch + jittered backoff.
 - **Security**: IRSA support, custom service accounts, least-privilege IAM.
 - **Flexible Configuration**: Helm chart, manifest, and Docker support.
 
@@ -86,6 +86,7 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--dry-run`                   | `false`              | Enable dry-run mode (no AWS changes).                                        |
 | `--metrics-bind-address`      | `8090`               | Port or address for Prometheus metrics. Bare ports are auto-prefixed with `0.0.0.0:`. |
 | `--health-probe-bind-address` | `8081`               | Port or address for health probes. Bare ports are auto-prefixed with `0.0.0.0:`.    |
+| `--aws-health-max-successes`  | `3`                  | Successful AWS health checks before latching; set to 0 to disable (negative values clamp to 0). |
 | `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs.                                  |
 | `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs.                                                |
 | `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching.                                                |
@@ -257,9 +258,9 @@ graph TD
 ```
 
 - **Pod Reconciler**: Watches Pod events, parses annotations, resolves ENIs, and syncs tags.
-- **AWS Client**: Handles EC2 API calls with rate limiting and retries.
+- **AWS Client**: Handles EC2 API calls with rate limiting and retries (each attempt re-checks the rate limiter with jittered backoff on retryable errors).
 - **ENI Cache**: In-memory and optional ConfigMap persistence for ENI lookups.
-- **Metrics & Health**: Prometheus `/metrics` and health probes `/healthz`, `/readyz`.
+- **Metrics & Health**: Prometheus `/metrics` and health probes `/healthz`, `/readyz`. AWS health checks latch after a configurable number of successes (default 3), serialize concurrent probes, and use jittered backoff for retries.
 
 ---
 

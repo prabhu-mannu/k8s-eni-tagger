@@ -195,6 +195,7 @@ config:
 | `config.podRateLimitQPS` | Per-pod reconciliation rate limit (QPS) | `0.1` |
 | `config.podRateLimitBurst` | Per-pod rate limit burst size | `1` |
 | `config.rateLimiterCleanupInterval` | Cleanup interval for stale per-pod rate limiters | `1m` |
+| `config.awsHealthMaxSuccesses` | Number of successful AWS health checks before latching and skipping further AWS API calls. Defaults to 3. Set to 0 to disable latching (negative values are treated as 0). | `3` |
 
 ### Security
 
@@ -218,6 +219,45 @@ metrics:
     prometheus.io/port: "8090"
     prometheus.io/path: "/metrics"
 ```
+
+### Health Probes
+
+All probe settings are configurable via values. Defaults are chosen to be safe for production, and you can tune them as needed.
+
+```yaml
+health:
+  # Main container ports expose metrics and health endpoints
+  port: 8081
+
+  startup:
+    # Verifies AWS connectivity once at startup
+    path: "/healthz"
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30   # ~5 minutes window (30 x 10s)
+
+  liveness:
+    # Simple ping (no AWS calls) to detect deadlocks
+    path: "/healthz"
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readiness:
+    # Simple ping (no AWS calls) to indicate manager readiness
+    path: "/readyz"
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+```
+
+Notes:
+- Kubernetes permits `successThreshold > 1` only for readiness probes. Liveness and startup must use `successThreshold = 1`.
+- The controller's AWS health check latching threshold (`config.awsHealthMaxSuccesses`) defaults to 3 unless explicitly set. Set to 0 to disable latching; negative values are treated as 0. Concurrent probes are serialized around the AWS call to honor the latch.
 
 ### Resources
 
@@ -257,6 +297,14 @@ To disable the generated configmap and keep manual control, set:
 configMap:
   create: false
 ```
+
+Among the generated environment variables, the following is relevant to probe behavior:
+
+```yaml
+ENI_TAGGER_AWS_HEALTH_MAX_SUCCESSES: <int>
+```
+
+If not set explicitly via `config.awsHealthMaxSuccesses`, it defaults to 3. Set to 0 to disable latching; negative values are treated as 0.
 
 ### Volume Mounts
 

@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,16 @@ func (m *mockEC2Client) DeleteTags(ctx context.Context, params *ec2.DeleteTagsIn
 	}
 	return args.Get(0).(*ec2.DeleteTagsOutput), args.Error(1)
 }
+
+type throttlingAPIError struct{}
+
+func (th throttlingAPIError) ErrorCode() string    { return "Throttling" }
+func (th throttlingAPIError) ErrorMessage() string { return "rate limited" }
+func (th throttlingAPIError) ErrorFault() smithy.ErrorFault {
+	return smithy.FaultServer
+}
+func (th throttlingAPIError) String() string { return th.Error() }
+func (th throttlingAPIError) Error() string  { return "Throttling: rate limited" }
 
 func TestGetENIInfoByIP(t *testing.T) {
 	ctx := context.TODO()
@@ -217,6 +228,48 @@ func TestTagENI(t *testing.T) {
 			mockClient.AssertExpectations(t)
 		})
 	}
+}
+
+func TestTagENI_RetryOnThrottling(t *testing.T) {
+	ctx := context.Background()
+	mockClient := new(mockEC2Client)
+	mockClient.On("CreateTags", mock.Anything, mock.Anything, mock.Anything).Return(nil, throttlingAPIError{}).Once()
+	mockClient.On("CreateTags", mock.Anything, mock.Anything, mock.Anything).Return(&ec2.CreateTagsOutput{}, nil).Once()
+
+	rl, err := newRateLimiter(10, 20)
+	require.NoError(t, err)
+
+	c := &defaultClient{
+		ec2Client:   mockClient,
+		rateLimiter: rl,
+	}
+
+	err = c.TagENI(ctx, "eni-abc", map[string]string{"k": "v"})
+	assert.NoError(t, err)
+	mockClient.AssertNumberOfCalls(t, "CreateTags", 2)
+	mockClient.AssertExpectations(t)
+}
+
+func TestTagENI_RetryStopsOnContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	mockClient := new(mockEC2Client)
+	mockClient.On("CreateTags", mock.Anything, mock.Anything, mock.Anything).Return(nil, throttlingAPIError{}).Once()
+
+	// Very low QPS so the second attempt blocks on the rate limiter and honors context deadline.
+	rl, err := newRateLimiter(0.1, 1)
+	require.NoError(t, err)
+
+	c := &defaultClient{
+		ec2Client:   mockClient,
+		rateLimiter: rl,
+	}
+
+	err = c.TagENI(ctx, "eni-abc", map[string]string{"k": "v"})
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	mockClient.AssertNumberOfCalls(t, "CreateTags", 1)
+	mockClient.AssertExpectations(t)
 }
 
 func TestUntagENI(t *testing.T) {

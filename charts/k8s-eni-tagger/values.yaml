@@ -96,6 +96,33 @@ metrics:
 health:
   # Health probe port
   port: 8081
+  startup:
+    # HTTP path to probe
+    path: "/healthz"
+    # Delay before starting probes
+    initialDelaySeconds: 0
+    # How often to perform the probe
+    periodSeconds: 10
+    # When the probe times out
+    timeoutSeconds: 5
+    # When to give up (30x10s = 5 minutes by default)
+    failureThreshold: 30
+  liveness:
+    # HTTP path to probe
+    path: "/healthz"
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    # HTTP path to probe
+    path: "/readyz"
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    # successThreshold is used as default for AWS health latch when config.awsHealthMaxSuccesses is not set
+    successThreshold: 1
 
 # Controller Configuration
 config:
@@ -137,6 +164,10 @@ config:
   podRateLimitBurst: 1
   # Interval to clean up stale per-pod rate limiters.
   rateLimiterCleanupInterval: 1m
+  # Number of successful AWS health checks before latching and skipping further AWS API calls.
+  # Default is 3. Set to 0 to disable latching (always call AWS); negative values are treated as 0.
+  # Concurrent probes serialize the AWS call and re-check the latch to avoid races.
+  awsHealthMaxSuccesses: 3
 
 # ConfigMap used to pass ENI_TAGGER_* env variables. The chart will create a
 # generated ConfigMap by default containing values from `.Values.config` and

@@ -149,6 +149,9 @@ func main() {
 		os.Exit(1)
 	}
 	awsChecker := health.NewAWSChecker(ec2HealthClient)
+	// Configure latch threshold from config (validated to be >= 0)
+	// 0 = disable latching, positive = latch after N successes
+	awsChecker.SetMaxSuccesses(cfg.AWSHealthMaxSuccesses)
 	if err := mgr.AddHealthzCheck("aws", awsChecker.Check); err != nil {
 		setupLog.Error(err, "unable to add AWS health check")
 		os.Exit(1)
