@@ -20,9 +20,11 @@ func (r *PodReconciler) retryUntagENI(ctx context.Context, eniID string, tags []
 
 // getENIInfo retrieves ENI information for a given IP address.
 // Uses cache if available, otherwise queries AWS API.
-func (r *PodReconciler) getENIInfo(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+func (r *PodReconciler) getENIInfo(ctx context.Context, pod *corev1.Pod) (*aws.ENIInfo, error) {
+	ip := pod.Status.PodIP
 	if r.ENICache != nil {
-		eniInfo, err := r.ENICache.GetENIInfoByIP(ctx, ip)
+		// Use Pod UID for smart cache validation
+		eniInfo, err := r.ENICache.GetENIInfoByIP(ctx, ip, string(pod.UID))
 		if err != nil {
 			return nil, fmt.Errorf("failed to get ENI info from cache for IP %s: %w", ip, err)
 		}

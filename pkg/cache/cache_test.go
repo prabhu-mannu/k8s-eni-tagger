@@ -30,7 +30,7 @@ func (m *MockAWSClient) GetEC2Client() *ec2.Client { return nil } // simplified
 // MockConfigMapPersister implements ConfigMapPersister for testing
 type MockConfigMapPersister struct {
 	mu           sync.Mutex
-	store        map[string]*aws.ENIInfo
+	store        map[string]CachedEntry
 	loadError    error
 	savedError   error
 	deleteError  error
@@ -38,19 +38,19 @@ type MockConfigMapPersister struct {
 	deleteCalled bool
 }
 
-func (m *MockConfigMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo, error) {
+func (m *MockConfigMapPersister) Load(ctx context.Context) (map[string]CachedEntry, error) {
 	if m.loadError != nil {
 		return nil, m.loadError
 	}
 	// copy map
-	res := make(map[string]*aws.ENIInfo)
+	res := make(map[string]CachedEntry)
 	for k, v := range m.store {
 		res[k] = v
 	}
 	return res, nil
 }
 
-func (m *MockConfigMapPersister) Save(ctx context.Context, ip string, info *aws.ENIInfo) error {
+func (m *MockConfigMapPersister) Save(ctx context.Context, ip string, entry CachedEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.saveCalled = true
@@ -58,9 +58,9 @@ func (m *MockConfigMapPersister) Save(ctx context.Context, ip string, info *aws.
 		return m.savedError
 	}
 	if m.store == nil {
-		m.store = make(map[string]*aws.ENIInfo)
+		m.store = make(map[string]CachedEntry)
 	}
-	m.store[ip] = info
+	m.store[ip] = entry
 	return nil
 }
 
@@ -80,8 +80,11 @@ func TestENICache_LoadFromConfigMap(t *testing.T) {
 	c := NewENICache(mockAWS)
 
 	mockPersister := &MockConfigMapPersister{
-		store: map[string]*aws.ENIInfo{
-			"10.0.0.1": {ID: "eni-1", SubnetID: "subnet-1"},
+		store: map[string]CachedEntry{
+			"10.0.0.1": {
+				Info:   &aws.ENIInfo{ID: "eni-1", SubnetID: "subnet-1"},
+				PodUID: "pod-1",
+			},
 		},
 	}
 	c.WithConfigMapPersister(mockPersister)
@@ -90,12 +93,27 @@ func TestENICache_LoadFromConfigMap(t *testing.T) {
 		t.Fatalf("LoadFromConfigMap failed: %v", err)
 	}
 
-	info, err := c.GetENIInfoByIP(context.Background(), "10.0.0.1")
+	// Valid lookup (correct UID)
+	info, err := c.GetENIInfoByIP(context.Background(), "10.0.0.1", "pod-1")
 	if err != nil {
 		t.Errorf("GetENIInfoByIP failed: %v", err)
 	}
 	if info.ID != "eni-1" {
 		t.Errorf("Expected eni-1, got %s", info.ID)
+	}
+
+	// Invalid lookup (wrong UID) -> Should be miss (but MockAWS returns nil/crash if called?)
+	// Let's set MockAWS to satisfy the miss
+	mockAWS.GetENIInfoByIPFunc = func(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+		return &aws.ENIInfo{ID: "eni-new"}, nil
+	}
+
+	infoMiss, errMiss := c.GetENIInfoByIP(context.Background(), "10.0.0.1", "pod-other")
+	if errMiss != nil {
+		t.Errorf("GetENIInfoByIP (miss) failed: %v", errMiss)
+	}
+	if infoMiss.ID != "eni-new" {
+		t.Errorf("Expected eni-new on UID mismatch, got %s", infoMiss.ID)
 	}
 }
 
@@ -108,14 +126,14 @@ func TestENICache_Persistence(t *testing.T) {
 	c := NewENICache(mockAWS)
 
 	mockPersister := &MockConfigMapPersister{
-		store: make(map[string]*aws.ENIInfo),
+		store: make(map[string]CachedEntry),
 	}
 	c.WithConfigMapPersister(mockPersister)
 	// speed up batching for tests
 	c.SetBatchConfig(10*time.Millisecond, 1)
 
 	// Test Save (Async)
-	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.2")
+	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.2", "pod-2")
 	if err != nil {
 		t.Fatalf("GetENIInfoByIP failed: %v", err)
 	}
@@ -124,13 +142,15 @@ func TestENICache_Persistence(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	mockPersister.mu.Lock()
-	if _, ok := mockPersister.store["10.0.0.2"]; !ok {
+	if entry, ok := mockPersister.store["10.0.0.2"]; !ok {
 		t.Error("Expected entry to be persisted to ConfigMap")
+	} else if entry.PodUID != "pod-2" {
+		t.Errorf("Expected persisted PodUID to be pod-2, got %s", entry.PodUID)
 	}
 	mockPersister.mu.Unlock()
 
 	// Test Delete (Async)
-	c.Invalidate(context.Background(), "10.0.0.2")
+	c.Invalidate(context.Background(), "10.0.0.2", "pod-2")
 	time.Sleep(50 * time.Millisecond)
 
 	mockPersister.mu.Lock()
@@ -149,7 +169,7 @@ func TestENICache_Size(t *testing.T) {
 	}
 
 	// Add mock entry
-	c.set(context.Background(), "1.1.1.1", &aws.ENIInfo{})
+	c.set(context.Background(), "1.1.1.1", &aws.ENIInfo{}, "pod-1")
 	if c.Size() != 1 {
 		t.Errorf("Expected size 1, got %d", c.Size())
 	}
@@ -182,12 +202,39 @@ func TestENICache_PersistenceErrors(t *testing.T) {
 	c.WithConfigMapPersister(mockPersister)
 
 	// Save error (should just log, not crash or return error to caller of GetENIInfoByIP)
-	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.1")
+	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.1", "pod-1")
 	if err != nil {
 		t.Errorf("GetENIInfoByIP failed despite persistence error: %v", err)
 	}
 
 	// Delete error
-	c.Invalidate(context.Background(), "10.0.0.1")
+	c.Invalidate(context.Background(), "10.0.0.1", "pod-1")
 	// Should not panic
+}
+
+func TestENICache_InvalidateUIDMismatchDoesNotDelete(t *testing.T) {
+	mockAWS := &MockAWSClient{
+		GetENIInfoByIPFunc: func(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+			return &aws.ENIInfo{ID: "eni-3"}, nil
+		},
+	}
+	c := NewENICache(mockAWS)
+	mockPersister := &MockConfigMapPersister{
+		store: make(map[string]CachedEntry),
+	}
+	c.WithConfigMapPersister(mockPersister)
+
+	_, err := c.GetENIInfoByIP(context.Background(), "10.0.0.3", "pod-a")
+	if err != nil {
+		t.Fatalf("GetENIInfoByIP failed: %v", err)
+	}
+
+	c.Invalidate(context.Background(), "10.0.0.3", "pod-b")
+
+	if c.Size() != 1 {
+		t.Fatalf("Expected cache entry to remain after UID mismatch, got size %d", c.Size())
+	}
+	if mockPersister.deleteCalled {
+		t.Fatal("Expected ConfigMap delete not to be called on UID mismatch")
+	}
 }

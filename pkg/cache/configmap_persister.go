@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"k8s-eni-tagger/pkg/aws"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,7 +32,7 @@ func NewConfigMapPersister(client client.Client, namespace string) ConfigMapPers
 }
 
 // Load loads all cached ENI entries from the ConfigMap
-func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo, error) {
+func (p *configMapPersister) Load(ctx context.Context) (map[string]CachedEntry, error) {
 	logger := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{}
@@ -46,57 +44,56 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]*aws.ENIInfo,
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("ENI cache ConfigMap not found, starting fresh")
-			return make(map[string]*aws.ENIInfo), nil
+			return make(map[string]CachedEntry), nil
 		}
 		return nil, fmt.Errorf("failed to get ConfigMap: %w", err)
 	}
 
-	result := make(map[string]*aws.ENIInfo)
+	result := make(map[string]CachedEntry)
 	skippedEntries := []string{}
 	for ip, data := range cm.Data {
-		var info aws.ENIInfo
-		if err := json.Unmarshal([]byte(data), &info); err != nil {
-			logger.Error(err, "Failed to unmarshal ENI info, entry corrupted - will clean up", "ip", ip, "data", data)
+		var entry CachedEntry
+		if err := json.Unmarshal([]byte(data), &entry); err != nil {
+			logger.Error(err, "Failed to unmarshal ENI cache entry, entry corrupted/old format - will clean up", "ip", ip)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
 		// Validate that required fields are present
-		if info.ID == "" {
-			logger.Error(nil, "ENI info missing required ID field, entry corrupted - will clean up", "ip", ip, "data", data)
+		// Check both Info.ID and PodUID for validity
+		if entry.Info == nil || entry.Info.ID == "" || entry.PodUID == "" {
+			logger.Error(nil, "Cache entry missing required fields (Info or PodUID), entry corrupted/old format - will clean up", "ip", ip)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
-		result[ip] = &info
+		result[ip] = entry
 	}
 
-	// Clean up corrupted entries asynchronously to avoid blocking cache loading
+	// Clean up corrupted entries synchronously
+	// This is safe because corruption is rare (only during format migration or actual corruption)
+	// and happens only at startup, so there's no performance impact on the hot path
 	if len(skippedEntries) > 0 {
-		logger.Info("ConfigMap cache corruption detected, cleaning up corrupted entries",
-			"corruptedEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
+		logger.Info("ConfigMap cache corruption/migration detected, cleaning up invalid entries",
+			"invalidEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
 
-		// Clean up corrupted entries in background to avoid blocking
-		// Use context.Background() since this is best-effort cleanup that should complete even if parent context is canceled
-		go func(cleanupCtx context.Context, entries []string) {
-			for _, ip := range entries {
-				if err := p.Delete(cleanupCtx, ip); err != nil {
-					logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
-				} else {
-					logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
-				}
+		for _, ip := range skippedEntries {
+			if err := p.Delete(ctx, ip); err != nil {
+				logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
+			} else {
+				logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
 			}
-		}(context.Background(), skippedEntries)
+		}
 	}
 
 	return result, nil
 }
 
 // Save persists a single ENI entry to the ConfigMap
-func (p *configMapPersister) Save(ctx context.Context, ip string, info *aws.ENIInfo) error {
+func (p *configMapPersister) Save(ctx context.Context, ip string, entry CachedEntry) error {
 	logger := log.FromContext(ctx)
 
-	data, err := json.Marshal(info)
+	data, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("failed to marshal ENI info: %w", err)
+		return fmt.Errorf("failed to marshal cache entry: %w", err)
 	}
 
 	var lastErr error

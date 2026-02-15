@@ -94,7 +94,7 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, pod *corev1.Pod) 
 
 	// Invalidate cache entry for this pod's IP
 	if r.ENICache != nil && pod.Status.PodIP != "" {
-		r.ENICache.Invalidate(ctx, pod.Status.PodIP)
+		r.ENICache.Invalidate(ctx, pod.Status.PodIP, string(pod.UID))
 		logger.Info("Invalidated ENI cache entry", "ip", pod.Status.PodIP)
 	}
 
