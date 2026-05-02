@@ -112,7 +112,10 @@ func TestLoad(t *testing.T) {
 			expectedItems: map[string]CachedEntry{}, // No valid items
 		},
 		{
-			name: "Corrupt Data (Missing Fields)",
+			// New-format payload missing PodUID is preserved with an empty
+			// PodUID; cache.get() treats it as a miss so the next reconcile
+			// refreshes it under the current format.
+			name: "Migrated Entry (Missing PodUID)",
 			existingObjs: []client.Object{
 				&corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
@@ -120,12 +123,35 @@ func TestLoad(t *testing.T) {
 						Namespace: "default",
 					},
 					Data: map[string]string{
-						"10.0.0.1": `{"info":{"ID":"eni-1"}}`, // Missing PodUID
+						"10.0.0.1": `{"info":{"ID":"eni-1"}}`,
 					},
 				},
 			},
 			expectedError: "",
-			expectedItems: map[string]CachedEntry{},
+			expectedItems: map[string]CachedEntry{
+				"10.0.0.1": {Info: &aws.ENIInfo{ID: "eni-1"}, PodUID: ""},
+			},
+		},
+		{
+			// Legacy format from the pre-UID release: top-level aws.ENIInfo
+			// JSON without the {"info": ...} wrapper. Should be preserved
+			// with an empty PodUID so it refreshes on next access.
+			name: "Migrated Entry (Legacy ENIInfo Format)",
+			existingObjs: []client.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      configMapName,
+						Namespace: "default",
+					},
+					Data: map[string]string{
+						"10.0.0.1": `{"ID":"eni-legacy","Tags":{"team":"platform"}}`,
+					},
+				},
+			},
+			expectedError: "",
+			expectedItems: map[string]CachedEntry{
+				"10.0.0.1": {Info: &aws.ENIInfo{ID: "eni-legacy"}, PodUID: ""},
+			},
 		},
 	}
 
@@ -275,15 +301,18 @@ func TestLoadCorruptionScenarios(t *testing.T) {
 		expectedItems map[string]CachedEntry
 	}{
 		{
-			name: "Mixed valid and invalid entries",
+			name: "Mixed valid, migrated, and invalid entries",
 			configMapData: map[string]string{
-				"10.0.0.1": string(validData),         // Valid
-				"10.0.0.2": "{invalid-json",           // Invalid JSON
-				"10.0.0.3": "",                        // Empty string
-				"10.0.0.4": `{"info":{"ID":"eni-4"}}`, // Missing PodUID
+				"10.0.0.1": string(validData),                      // Valid current format
+				"10.0.0.2": "{invalid-json",                        // Invalid JSON
+				"10.0.0.3": "",                                     // Empty string
+				"10.0.0.4": `{"info":{"ID":"eni-4"}}`,              // Migrated (missing PodUID)
+				"10.0.0.5": `{"ID":"eni-legacy","Tags":{"a":"b"}}`, // Migrated (legacy format)
 			},
 			expectedItems: map[string]CachedEntry{
 				"10.0.0.1": validEntry,
+				"10.0.0.4": {Info: &aws.ENIInfo{ID: "eni-4"}, PodUID: ""},
+				"10.0.0.5": {Info: &aws.ENIInfo{ID: "eni-legacy"}, PodUID: ""},
 			},
 		},
 		{

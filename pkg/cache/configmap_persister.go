@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"k8s-eni-tagger/pkg/aws"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,41 +53,70 @@ func (p *configMapPersister) Load(ctx context.Context) (map[string]CachedEntry, 
 	}
 
 	result := make(map[string]CachedEntry)
+	migratedEntries := 0
 	skippedEntries := []string{}
 	for ip, data := range cm.Data {
-		var entry CachedEntry
-		if err := json.Unmarshal([]byte(data), &entry); err != nil {
-			logger.Error(err, "Failed to unmarshal ENI cache entry, entry corrupted/old format - will clean up", "ip", ip)
+		entry, migrated, ok := parseCacheEntry([]byte(data))
+		if !ok {
+			logger.Info("Cache entry corrupted, will clean up", "ip", ip)
 			skippedEntries = append(skippedEntries, ip)
 			continue
 		}
-		// Validate that required fields are present
-		// Check both Info.ID and PodUID for validity
-		if entry.Info == nil || entry.Info.ID == "" || entry.PodUID == "" {
-			logger.Error(nil, "Cache entry missing required fields (Info or PodUID), entry corrupted/old format - will clean up", "ip", ip)
-			skippedEntries = append(skippedEntries, ip)
-			continue
+		if migrated {
+			migratedEntries++
 		}
 		result[ip] = entry
 	}
 
-	// Clean up corrupted entries synchronously
-	// This is safe because corruption is rare (only during format migration or actual corruption)
-	// and happens only at startup, so there's no performance impact on the hot path
-	if len(skippedEntries) > 0 {
-		logger.Info("ConfigMap cache corruption/migration detected, cleaning up invalid entries",
-			"invalidEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
+	if migratedEntries > 0 {
+		logger.Info("Loaded legacy-format ENI cache entries; they will be refreshed on next reconcile",
+			"migratedEntries", migratedEntries)
+	}
 
-		for _, ip := range skippedEntries {
-			if err := p.Delete(ctx, ip); err != nil {
-				logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
-			} else {
-				logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
-			}
-		}
+	// Clean up corrupted entries asynchronously with a detached context so
+	// startup is not blocked and cleanup completes even if the caller's
+	// context is cancelled. Cleanup is best-effort: corrupted entries are
+	// never read back into the cache, so a failed delete only wastes a row.
+	if len(skippedEntries) > 0 {
+		logger.Info("ConfigMap corruption detected, scheduling cleanup",
+			"invalidEntries", len(skippedEntries), "validEntries", len(result), "ips", skippedEntries)
+		go p.cleanupEntries(skippedEntries)
 	}
 
 	return result, nil
+}
+
+// parseCacheEntry decodes a single ConfigMap value into a CachedEntry.
+// It accepts both the current format ({"info":{...},"pod_uid":"..."}) and the
+// legacy format from the pre-UID release (a top-level aws.ENIInfo JSON).
+// The migrated bool is true when the data was decoded as legacy format; such
+// entries have an empty PodUID so cache.get() will treat them as misses and
+// rewrite them under the new format on next access.
+func parseCacheEntry(data []byte) (entry CachedEntry, migrated bool, ok bool) {
+	var newFormat CachedEntry
+	if err := json.Unmarshal(data, &newFormat); err == nil && newFormat.Info != nil && newFormat.Info.ID != "" {
+		return newFormat, false, true
+	}
+
+	var legacy aws.ENIInfo
+	if err := json.Unmarshal(data, &legacy); err == nil && legacy.ID != "" {
+		return CachedEntry{Info: &legacy}, true, true
+	}
+
+	return CachedEntry{}, false, false
+}
+
+func (p *configMapPersister) cleanupEntries(ips []string) {
+	logger := log.Log.WithName("eni-cache-cleanup")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	for _, ip := range ips {
+		if err := p.Delete(ctx, ip); err != nil {
+			logger.Error(err, "Failed to clean up corrupted ConfigMap entry", "ip", ip)
+			continue
+		}
+		logger.Info("Cleaned up corrupted ConfigMap entry", "ip", ip)
+	}
 }
 
 // Save persists a single ENI entry to the ConfigMap

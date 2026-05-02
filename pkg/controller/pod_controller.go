@@ -100,7 +100,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 
-	// Get ENIInfo
+	// Get ENI info
 	eniInfo, err := r.getENIInfo(ctx, pod)
 	if err != nil {
 		logger.Error(err, "Failed to get ENI info", LogKeyPod, req.NamespacedName, LogKeyPodIP, pod.Status.PodIP)

@@ -212,6 +212,54 @@ func TestENICache_PersistenceErrors(t *testing.T) {
 	// Should not panic
 }
 
+// TestENICache_LegacyEntryRefreshesOnGet verifies that an entry loaded via
+// migration (PodUID == "") is treated as a cache miss so it is re-fetched and
+// rewritten in the new format on first access.
+func TestENICache_LegacyEntryRefreshesOnGet(t *testing.T) {
+	awsCalls := 0
+	mockAWS := &MockAWSClient{
+		GetENIInfoByIPFunc: func(ctx context.Context, ip string) (*aws.ENIInfo, error) {
+			awsCalls++
+			return &aws.ENIInfo{ID: "eni-fresh"}, nil
+		},
+	}
+	c := NewENICache(mockAWS)
+
+	mockPersister := &MockConfigMapPersister{
+		store: map[string]CachedEntry{
+			// PodUID empty simulates a migrated legacy entry
+			"10.0.0.9": {Info: &aws.ENIInfo{ID: "eni-stale"}},
+		},
+	}
+	c.WithConfigMapPersister(mockPersister)
+	if err := c.LoadFromConfigMap(context.Background()); err != nil {
+		t.Fatalf("LoadFromConfigMap failed: %v", err)
+	}
+
+	info, err := c.GetENIInfoByIP(context.Background(), "10.0.0.9", "pod-current")
+	if err != nil {
+		t.Fatalf("GetENIInfoByIP failed: %v", err)
+	}
+	if info.ID != "eni-fresh" {
+		t.Errorf("Expected eni-fresh after legacy refresh, got %s", info.ID)
+	}
+	if awsCalls != 1 {
+		t.Errorf("Expected exactly 1 AWS call to refresh legacy entry, got %d", awsCalls)
+	}
+
+	// Second access should now hit cache (entry was rewritten with PodUID).
+	info2, err := c.GetENIInfoByIP(context.Background(), "10.0.0.9", "pod-current")
+	if err != nil {
+		t.Fatalf("GetENIInfoByIP (second) failed: %v", err)
+	}
+	if info2.ID != "eni-fresh" {
+		t.Errorf("Expected eni-fresh from cache on second access, got %s", info2.ID)
+	}
+	if awsCalls != 1 {
+		t.Errorf("Expected no extra AWS call on second access, got %d total", awsCalls)
+	}
+}
+
 func TestENICache_InvalidateUIDMismatchDoesNotDelete(t *testing.T) {
 	mockAWS := &MockAWSClient{
 		GetENIInfoByIPFunc: func(ctx context.Context, ip string) (*aws.ENIInfo, error) {

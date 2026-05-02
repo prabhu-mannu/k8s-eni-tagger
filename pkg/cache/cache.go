@@ -12,11 +12,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// CachedEntry represents a cached ENI lookup with validation metadata
+// CachedEntry represents a cached ENI lookup with validation metadata.
+// An empty PodUID marks a legacy entry loaded during format migration; such
+// entries are treated as misses on lookup so they are refreshed (and rewritten
+// in the new format) on next access.
 type CachedEntry struct {
-	Info      *aws.ENIInfo `json:"info"`
-	PodUID    string       `json:"pod_uid"`
-	CreatedAt time.Time    `json:"created_at"`
+	Info   *aws.ENIInfo `json:"info"`
+	PodUID string       `json:"pod_uid"`
 }
 
 // cacheUpdate represents a pending update to the ConfigMap
@@ -25,7 +27,10 @@ type cacheUpdate struct {
 	entry CachedEntry
 }
 
-// Cache defines the interface for ENI caching
+// Cache defines the interface for ENI caching. The podUID parameter on
+// GetENIInfoByIP and Invalidate is the requesting pod's UID; cache entries are
+// only returned (or deleted) when the cached PodUID matches, which prevents
+// stale results when an IP is reassigned to a different pod.
 type Cache interface {
 	GetENIInfoByIP(ctx context.Context, ip string, podUID string) (*aws.ENIInfo, error)
 	Invalidate(ctx context.Context, ip string, podUID string)
@@ -118,13 +123,13 @@ func (c *ENICache) LoadFromConfigMap(ctx context.Context) error {
 // It requires the expected PodUID to validate the cache entry.
 func (c *ENICache) GetENIInfoByIP(ctx context.Context, ip string, podUID string) (*aws.ENIInfo, error) {
 	// Try in-memory cache first
-	if info, ok := c.get(ip, podUID); ok {
+	if info, ok := c.get(ctx, ip, podUID); ok {
 		metrics.CacheHitsTotal.Inc()
 		return info, nil
 	}
 	metrics.CacheMissesTotal.Inc()
 
-	// Cache miss or UID mismatch - call AWS API
+	// Cache miss, UID mismatch, or legacy migrated entry - call AWS API
 	info, err := c.awsClient.GetENIInfoByIP(ctx, ip)
 	if err != nil {
 		return nil, err
@@ -135,19 +140,25 @@ func (c *ENICache) GetENIInfoByIP(ctx context.Context, ip string, podUID string)
 	return info, nil
 }
 
-// get retrieves from in-memory cache with validation
-func (c *ENICache) get(ip string, podUID string) (*aws.ENIInfo, bool) {
+// get retrieves from in-memory cache with validation. An empty cached PodUID
+// marks a legacy entry loaded during format migration and is always treated as
+// a miss to force a refresh under the new format.
+func (c *ENICache) get(ctx context.Context, ip string, podUID string) (*aws.ENIInfo, bool) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	entry, ok := c.cache[ip]
+	c.mu.RUnlock()
+
 	if !ok {
 		return nil, false
 	}
 
-	// Validate Pod UID
+	if entry.PodUID == "" {
+		log.FromContext(ctx).V(1).Info("Cache entry has no PodUID (migrated legacy entry), refreshing", "ip", ip)
+		return nil, false
+	}
+
 	if entry.PodUID != podUID {
-		// Log this interesting event? maybe verbose logging
+		log.FromContext(ctx).V(1).Info("Cache miss due to pod UID mismatch", "ip", ip, "cachedPodUID", entry.PodUID, "requestedPodUID", podUID)
 		return nil, false
 	}
 
@@ -158,9 +169,8 @@ func (c *ENICache) get(ip string, podUID string) (*aws.ENIInfo, bool) {
 func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo, podUID string) {
 	c.mu.Lock()
 	entry := CachedEntry{
-		Info:      info,
-		PodUID:    podUID,
-		CreatedAt: time.Now(),
+		Info:   info,
+		PodUID: podUID,
 	}
 	c.cache[ip] = entry
 	c.mu.Unlock()

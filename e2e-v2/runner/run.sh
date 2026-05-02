@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -x
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,7 +25,7 @@ ENI_INTERFACE_TYPE=${ENI_INTERFACE_TYPE:-interface}
 ENI_SUBNET_ID=${ENI_SUBNET_ID:-subnet-1234}
 AWS_NODEPORT_PORT=${AWS_NODEPORT_PORT:-30066}
 K3S_CONTAINER_NAME=${K3S_CONTAINER_NAME:-k8s-eni-tagger-k3s}
-LOAD_CONTROLLER_IMAGE_TAR=${LOAD_CONTROLLER_IMAGE_TAR:-0}
+LOAD_CONTROLLER_IMAGE_TAR=${LOAD_CONTROLLER_IMAGE_TAR:-auto}
 CONTROLLER_IMAGE_TAR=${CONTROLLER_IMAGE_TAR:-/workspace/k8s-eni-tagger-dev.tar}
 MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-180}
 METRICS_BIND_ADDRESS=${METRICS_BIND_ADDRESS:-8090}
@@ -91,13 +90,24 @@ select_endpoint() {
 }
 
 ensure_controller_image() {
-  log_info "Checking if controller image exists in k3s"
-  if ! docker exec "$K3S_CONTAINER_NAME" ctr images ls | grep -q "${CONTROLLER_IMAGE}"; then
-    log_info "Importing controller image into k3s: ${CONTROLLER_IMAGE}"
-    docker save "${CONTROLLER_IMAGE}" | docker exec -i "$K3S_CONTAINER_NAME" ctr images import -
-  else
-    log_info "Controller image already present in k3s"
+  # Explicit opt-out: callers can set LOAD_CONTROLLER_IMAGE_TAR=0 to skip
+  # all image preloading (e.g., when the image is already pulled by another
+  # mechanism). Set =1 to use the legacy tarball loader.
+  if [ "$LOAD_CONTROLLER_IMAGE_TAR" = "0" ]; then
+    log_info "Skipping controller image import (LOAD_CONTROLLER_IMAGE_TAR=0)"
+    return
   fi
+  if [ "$LOAD_CONTROLLER_IMAGE_TAR" = "1" ]; then
+    /runner/image-loader.sh "$CONTROLLER_IMAGE_TAR"
+    return
+  fi
+  log_info "Checking if controller image exists in k3s"
+  if docker exec "$K3S_CONTAINER_NAME" ctr images ls | grep -q "${CONTROLLER_IMAGE}"; then
+    log_info "Controller image already present in k3s"
+    return
+  fi
+  log_info "Importing controller image into k3s: ${CONTROLLER_IMAGE}"
+  docker save "${CONTROLLER_IMAGE}" | docker exec -i "$K3S_CONTAINER_NAME" ctr images import -
 }
 
 ensure_mock_image() {
@@ -276,7 +286,7 @@ EOF
   # Verify cache ConfigMap contains entry with Pod UID
   log_info "Checking cache ConfigMap for Pod UID validation"
   local cache_entry
-  cache_entry=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-cache -o jsonpath="{.data['${pod2_ip}']}" 2>/dev/null || echo "{}")
+  cache_entry=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-tagger-cache -o jsonpath="{.data['${pod2_ip}']}" 2>/dev/null || echo "{}")
 
   if echo "$cache_entry" | jq -e ".pod_uid == \"${pod2_uid}\"" >/dev/null 2>&1; then
     log_info "✓ Cache entry contains correct Pod UID"
@@ -304,7 +314,7 @@ EOF
   # Verify cache entry was invalidated (should be removed from ConfigMap)
   log_info "Verifying cache invalidation"
   local cache_after_delete
-  cache_after_delete=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-cache -o jsonpath="{.data['${pod2_ip}']}" 2>/dev/null || echo "")
+  cache_after_delete=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-tagger-cache -o jsonpath="{.data['${pod2_ip}']}" 2>/dev/null || echo "")
 
   if [ -z "$cache_after_delete" ]; then
     log_info "✓ Cache entry correctly invalidated (removed from ConfigMap)"
@@ -360,7 +370,7 @@ EOF
     # Check that cache entry has new UID, not old one
     sleep 5  # Give controller time to reconcile
     local cache_pod3
-    cache_pod3=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-cache -o jsonpath="{.data['${pod3_ip}']}" 2>/dev/null || echo "{}")
+    cache_pod3=$(kubectl -n "$CONTROLLER_NAMESPACE" get configmap eni-tagger-cache -o jsonpath="{.data['${pod3_ip}']}" 2>/dev/null || echo "{}")
 
     if echo "$cache_pod3" | jq -e ".pod_uid == \"${pod3_uid}\"" >/dev/null 2>&1; then
       log_info "✓ Cache correctly updated with new Pod UID (${pod3_uid})"
