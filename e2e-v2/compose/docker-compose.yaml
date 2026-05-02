@@ -36,12 +36,6 @@ services:
       nofile:
         soft: 65535
         hard: 65535
-    deploy:
-      resources:
-        limits:
-          memory: 6G
-        reservations:
-          memory: 2G
     shm_size: 2gb
     networks:
       - e2e-v2
