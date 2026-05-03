@@ -7,8 +7,25 @@ updates:
     open-pull-requests-limit: 10
     rebase-strategy: "auto"
     groups:
-      go-all:
-        patterns: ["*"]
+      # AWS SDK families: low-risk, easy to review and merge together.
+      aws-sdk:
+        patterns:
+          - "github.com/aws/*"
+      # Kubernetes platform deps: high-risk, breaking changes are common
+      # across minor versions. Keep isolated so they can be e2e-tested
+      # before merge without entangling unrelated bumps.
+      k8s-platform:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      # Everything else (logging, metrics, config, etc.).
+      go-misc:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github.com/aws/*"
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
