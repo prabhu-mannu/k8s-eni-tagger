@@ -40,7 +40,7 @@ graph TD
 4.  **ENI Cache**:
     - Caches ENI IDs resolved from Pod IPs.
     - **Lifecycle-based**: Cache entries are invalidated only when the Pod is deleted (not TTL-based). This ensures consistency and reduces unnecessary AWS API calls.
-    - Optional **ConfigMap Persistence**: Preserves cache across controller restarts to reduce API calls on startup.
+    - Optional **ConfigMap Persistence** (*experimental*): Best-effort warm-up of the in-memory cache across controller restarts. AWS remains the source of truth; persisted entries are Pod-UID-validated on read and are silently refreshed if stale. Updates may be dropped under load (see `k8s_eni_tagger_cache_persist_dropped_total`).
 5.  **Metrics Server**: Exposes Prometheus metrics (`/metrics`).
 6.  **Health Probes**: Exposes Liveness (`/healthz`) and Readiness (`/readyz`) endpoints. AWS connectivity checks latch after a configurable number of successes, serialize concurrent probes, and use jittered backoff on retries.
 

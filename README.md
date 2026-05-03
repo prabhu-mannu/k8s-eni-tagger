@@ -90,7 +90,7 @@ The controller will apply these tags to the Pod's ENI in AWS.
 | `--subnet-ids`                | `""`                 | Comma-separated list of allowed Subnet IDs.                                  |
 | `--allow-shared-eni-tagging`  | `false`              | Allow tagging of shared ENIs.                                                |
 | `--enable-eni-cache`          | `true`               | Enable in-memory ENI caching.                                                |
-| `--enable-cache-configmap`    | `false`              | Enable ConfigMap persistence for ENI cache.                                  |
+| `--enable-cache-configmap`    | `false`              | **Experimental.** Enable ConfigMap persistence for ENI cache. AWS remains the source of truth; persistence is best-effort and may drop updates under load. |
 | `--aws-rate-limit-qps`        | `10`                 | AWS API rate limit (requests per second).                                    |
 | `--aws-rate-limit-burst`      | `20`                 | AWS API rate limit burst.                                                    |
 | `--pprof-bind-address`        | `0` (disabled)       | Address to bind pprof endpoint.                                              |
@@ -259,7 +259,7 @@ graph TD
 
 - **Pod Reconciler**: Watches Pod events, parses annotations, resolves ENIs, and syncs tags.
 - **AWS Client**: Handles EC2 API calls with rate limiting and retries (each attempt re-checks the rate limiter with jittered backoff on retryable errors).
-- **ENI Cache**: In-memory and optional ConfigMap persistence for ENI lookups.
+- **ENI Cache**: In-memory ENI lookups, with optional **experimental** ConfigMap persistence to warm the cache across restarts. AWS is the source of truth; the ConfigMap is treated as best-effort and Pod-UID-validated on read.
 - **Metrics & Health**: Prometheus `/metrics` and health probes `/healthz`, `/readyz`. AWS health checks latch after a configurable number of successes (default 3), serialize concurrent probes, and use jittered backoff for retries.
 
 ---

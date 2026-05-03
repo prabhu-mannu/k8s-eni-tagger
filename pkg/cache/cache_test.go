@@ -2,13 +2,16 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"k8s-eni-tagger/pkg/aws"
+	"k8s-eni-tagger/pkg/metrics"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // MockAWSClient implements aws.Client for testing
@@ -36,6 +39,10 @@ type MockConfigMapPersister struct {
 	deleteError  error
 	saveCalled   bool
 	deleteCalled bool
+	// blockSave, when non-nil, makes Save block on a receive from this channel
+	// before returning. Closing the channel unblocks all in-flight and future
+	// Save calls. Used by tests that need to stall the persistence worker.
+	blockSave chan struct{}
 }
 
 func (m *MockConfigMapPersister) Load(ctx context.Context) (map[string]CachedEntry, error) {
@@ -51,6 +58,9 @@ func (m *MockConfigMapPersister) Load(ctx context.Context) (map[string]CachedEnt
 }
 
 func (m *MockConfigMapPersister) Save(ctx context.Context, ip string, entry CachedEntry) error {
+	if m.blockSave != nil {
+		<-m.blockSave
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.saveCalled = true
@@ -284,5 +294,42 @@ func TestENICache_InvalidateUIDMismatchDoesNotDelete(t *testing.T) {
 	}
 	if mockPersister.deleteCalled {
 		t.Fatal("Expected ConfigMap delete not to be called on UID mismatch")
+	}
+}
+
+// TestENICache_PersistDroppedCounterIncrements verifies that
+// CachePersistDroppedTotal counts queue overflows. We stall the persister so
+// the worker blocks on the first Save; subsequent updates fill the queue, and
+// any further updates fall into the select default and must be metered.
+func TestENICache_PersistDroppedCounterIncrements(t *testing.T) {
+	mockAWS := &MockAWSClient{}
+	c := NewENICache(mockAWS)
+
+	blockCh := make(chan struct{})
+	mockPersister := &MockConfigMapPersister{
+		store:     make(map[string]CachedEntry),
+		blockSave: blockCh,
+	}
+	c.WithConfigMapPersister(mockPersister)
+	t.Cleanup(func() { close(blockCh) })
+
+	// Flush after every item so the worker enters Save (and blocks) right away.
+	// Long interval prevents the ticker from kicking in during the test.
+	c.SetBatchConfig(time.Hour, 1)
+
+	before := testutil.ToFloat64(metrics.CachePersistDroppedTotal)
+
+	// Queue capacity is 1000; the worker drains exactly one item before blocking
+	// in Save. Push 1500 unique IPs so we are guaranteed to overflow even if
+	// the worker absorbs a few items before its first flush.
+	info := &aws.ENIInfo{ID: "eni-test"}
+	for i := 0; i < 1500; i++ {
+		ip := fmt.Sprintf("10.0.%d.%d", i/256, i%256)
+		c.set(context.Background(), ip, info, "uid")
+	}
+
+	after := testutil.ToFloat64(metrics.CachePersistDroppedTotal)
+	if after <= before {
+		t.Fatalf("Expected CachePersistDroppedTotal to increase, before=%v after=%v", before, after)
 	}
 }

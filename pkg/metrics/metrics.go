@@ -31,6 +31,17 @@ var (
 			Help: "Total number of ENI cache misses",
 		},
 	)
+
+	// CachePersistDroppedTotal tracks ConfigMap persistence updates dropped
+	// because the worker queue was full. Drops are safe (the in-memory cache
+	// is updated, and Pod-UID validation catches staleness on restart) but
+	// indicate the persister cannot keep up with reconcile rate.
+	CachePersistDroppedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8s_eni_tagger_cache_persist_dropped_total",
+			Help: "Total number of ConfigMap persistence updates dropped due to a full worker queue",
+		},
+	)
 )
 
 func init() {
@@ -39,5 +50,6 @@ func init() {
 		AWSAPILatency,
 		CacheHitsTotal,
 		CacheMissesTotal,
+		CachePersistDroppedTotal,
 	)
 }

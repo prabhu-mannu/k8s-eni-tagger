@@ -181,7 +181,10 @@ func (c *ENICache) set(ctx context.Context, ip string, info *aws.ENIInfo, podUID
 		select {
 		case c.updateQueue <- cacheUpdate{ip: ip, entry: entry}:
 		default:
-			// queue full, drop update (log warning)
+			// Queue full: drop the persistence update. The in-memory cache is
+			// already updated; Pod-UID validation in get() catches any stale
+			// ConfigMap entry that survives a restart, so this is safe.
+			metrics.CachePersistDroppedTotal.Inc()
 			log.FromContext(ctx).Info("ConfigMap update queue full, dropping update", "ip", ip)
 		}
 	}
@@ -237,7 +240,7 @@ func (c *ENICache) configMapWorker() {
 			return
 		case upd := <-c.updateQueue:
 			batch = append(batch, upd)
-			if len(batch) >= c.batchSize {
+			if len(batch) >= batchSize {
 				c.flushBatch(batch, logger)
 				batch = batch[:0]
 			}
