@@ -16,4 +16,7 @@ func TestMetricsInit(t *testing.T) {
 	if CacheMissesTotal == nil {
 		t.Error("CacheMissesTotal is nil")
 	}
+	if CachePersistDroppedTotal == nil {
+		t.Error("CachePersistDroppedTotal is nil")
+	}
 }
